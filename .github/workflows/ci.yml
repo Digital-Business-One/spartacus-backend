@@ -1,0 +1,103 @@
+name: CI/CD — Backend
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [dev, main]
+
+env:
+  REGION: us-east1
+
+jobs:
+  # ─── Lint & Testes unitários ────────────────────────────────────────────────
+  test:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint (ruff)
+        run: uv run ruff check app/
+
+      - name: Unit tests
+        run: uv run pytest
+
+  # ─── Testes de integração (Firebase Emulators) ─────────────────────────────
+  test-integration:
+    name: Integration Tests
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Integration tests (emuladores gerenciados pelo pytest)
+        run: uv run pytest tests/integration/ -v
+
+  # ─── Deploy → Cloud Run ─────────────────────────────────────────────────────
+  deploy:
+    name: Deploy → Cloud Run
+    needs: [test, test-integration]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE: ${{ secrets.FIREBASE_PROJECT_ID }}/spartacus-backend/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticar no GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker para Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build imagem Docker
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            --target prod \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.IMAGE }}:latest \
+            .
+
+      - name: Push imagem para Artifact Registry
+        run: |
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.IMAGE }}:latest
+
+      - name: Deploy no Cloud Run
+        run: |
+          gcloud run deploy spartacus-backend \
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ env.IMAGE }}:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --quiet
