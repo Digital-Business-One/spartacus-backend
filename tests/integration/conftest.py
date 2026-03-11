@@ -27,7 +27,7 @@ _FIRESTORE_HOST = "localhost:8080"
 _AUTH_HOST = "localhost:9099"
 _STORAGE_HOST = "localhost:9199"
 
-_REPO_ROOT = Path(__file__).parents[3]  # backend/tests/integration -> repo root
+_REPO_ROOT = Path(__file__).parents[2]  # tests/integration -> repo root
 _COMPOSE_FILE = str(_REPO_ROOT / "docker-compose.yml")
 
 # ── Env vars — definidas antes de qualquer import do app ─────────────────────

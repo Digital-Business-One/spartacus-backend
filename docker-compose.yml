@@ -1,0 +1,25 @@
+services:
+  # ─── Firebase Emulator Suite (usado pelos testes de integração) ─────────────
+  emulators:
+    build:
+      context: ./emulators
+      dockerfile: Dockerfile
+    working_dir: /app
+    command: >
+      bash -c "echo '{\"emulators\":{\"auth\":{\"port\":9099,\"host\":\"0.0.0.0\"},\"firestore\":{\"port\":8080,\"host\":\"0.0.0.0\"},\"storage\":{\"port\":9199,\"host\":\"0.0.0.0\"},\"ui\":{\"enabled\":true,\"host\":\"0.0.0.0\",\"port\":4000}}}' > /app/firebase.json &&
+      npx -y firebase-tools@latest emulators:start
+      --project demo-spartacus
+      --only firestore,auth,storage"
+    ports:
+      - "4000:4000"   # Emulator UI
+      - "8080:8080"   # Firestore
+      - "9099:9099"   # Auth
+      - "9199:9199"   # Storage
+    environment:
+      - GOOGLE_CLOUD_PROJECT=demo-spartacus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s

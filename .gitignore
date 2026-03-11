@@ -22,6 +22,9 @@ build/
 *.swp
 *.swo
 
+# Emulators
+emulator-data/
+
 # OS
 .DS_Store
 Thumbs.db
