@@ -38,7 +38,10 @@ def run() -> None:
     gcp_project = os.getenv("GOOGLE_CLOUD_PROJECT", project_id)
 
     # Upload logo to Firebase Storage
-    bucket = storage.bucket(f"{gcp_project}.appspot.com")
+    bucket_name = os.getenv(
+        "FIREBASE_STORAGE_BUCKET", f"{gcp_project}.firebasestorage.app"
+    )
+    bucket = storage.bucket(bucket_name)
     logo_path = _ASSETS_DIR / "logo.jpg"
     blob = bucket.blob(f"projects/{project_id}/logo.jpg")
     blob.upload_from_filename(str(logo_path), content_type="image/jpeg")
