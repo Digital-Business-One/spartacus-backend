@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import os
+import re
 
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -10,8 +11,9 @@ from app.security.context import auth_ctx
 # Functions marked with @public — populated at import time.
 _PUBLIC_FUNCTIONS: set = set()
 
-# Resolved paths for public routes — populated by register_public_routes().
-_PUBLIC_PATHS: set[str] = set()
+# Compiled regex patterns for public routes (supports path parameters).
+# Populated by register_public_routes().
+_PUBLIC_PATTERNS: list[re.Pattern] = []
 
 
 def public(func):
@@ -23,7 +25,9 @@ def public(func):
 
 def register_public_routes(routes) -> None:
     """
-    Scan app routes and register paths for @public-marked handlers.
+    Scan app routes and register path patterns for @public-marked handlers.
+    Converts path templates (e.g. /{project_id}/classes) to regex patterns
+    so parameterized routes are correctly matched at request time.
     Must be called once after all routes are registered in main.py.
     """
     for route in routes:
@@ -31,11 +35,13 @@ def register_public_routes(routes) -> None:
         if endpoint is not None and getattr(endpoint, "__is_public__", False):
             path = getattr(route, "path", "")
             if path:
-                _PUBLIC_PATHS.add(path)
+                pattern = re.sub(r"\{[^}]+\}", "[^/]+", path)
+                _PUBLIC_PATTERNS.append(re.compile(f"^{pattern}$"))
 
 
 def is_public(request: Request) -> bool:
-    return request.url.path in _PUBLIC_PATHS
+    path = request.url.path
+    return any(p.match(path) for p in _PUBLIC_PATTERNS)
 
 
 def require_roles(*roles: str):
