@@ -3,7 +3,13 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from app.logging.decorator import log
-from app.models.auth import SignupRequest, SignupResponse
+from app.models.auth import (
+    EmailVerifiedResponse,
+    ResendVerificationRequest,
+    SignupRequest,
+    SignupResponse,
+)
+from app.security.context import auth_ctx
 from app.security.decorator import public
 from app.security.firebase import verify_id_token
 from app.services.auth_service import AuthService
@@ -34,3 +40,21 @@ def signup(
             raise HTTPException(status_code=401, detail="Token inválido")
 
     return AuthService().signup(x_project_id, data, google_uid)
+
+
+@log
+@router.post("/email-verified")
+def email_verified(
+    x_project_id: str = Header(...),
+) -> EmailVerifiedResponse:
+    ctx = auth_ctx.get()
+    AuthService().confirm_email_verified(ctx.user_id, ctx.user_email)
+    return EmailVerifiedResponse(status="pending_approval")
+
+
+@log
+@router.post("/resend-verification")
+@public
+def resend_verification(data: ResendVerificationRequest) -> EmailVerifiedResponse:
+    AuthService().resend_verification(data)
+    return EmailVerifiedResponse(status="ok")

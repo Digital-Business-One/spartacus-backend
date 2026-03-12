@@ -156,3 +156,11 @@ class SignupRequest(BaseModel):
 class SignupResponse(BaseModel):
     uid: str
     status: str
+
+
+class ResendVerificationRequest(BaseModel):
+    email: str
+
+
+class EmailVerifiedResponse(BaseModel):
+    status: str
