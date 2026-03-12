@@ -151,4 +151,5 @@ jobs:
         env:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
           ROOT_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_PROJECT_ID }}.firebasestorage.app
         run: uv run python seeds/seed.py
