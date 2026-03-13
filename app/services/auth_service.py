@@ -1,16 +1,47 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import HTTPException
 from firebase_admin import auth, firestore
 
 from app.logging.decorator import log
-from app.models.auth import ResendVerificationRequest, SignupRequest, SignupResponse
-from app.services.email_service import EmailService
+from app.models.auth import ResendVerificationRequest, SignupRequest
+from app.notifications.models import (
+    AccountReceivedPayload,
+    DomainEvent,
+    ResendVerificationPayload,
+    SignupEmailPayload,
+    SignupGooglePayload,
+)
+
+_ROLES_PT = {
+    "student": "Aluno",
+    "teacher": "Professor",
+    "instructor": "Instrutor",
+    "guardian": "Responsável",
+    "supporter": "Apoiador",
+    "sponsor": "Patrocinador",
+}
+
+
+def _roles_label(roles: list[str]) -> str:
+    return ", ".join(_ROLES_PT.get(r, r) for r in roles)
+
+
+def _calculate_age(birth_date_str: str) -> str:
+    birth = datetime.strptime(birth_date_str, "%d/%m/%Y").date()
+    today = date.today()
+    age = (
+        today.year
+        - birth.year
+        - ((today.month, today.day) < (birth.month, birth.day))
+    )
+    return f"{age} ano{'s' if age != 1 else ''}"
 
 
 class AuthService:
     _USERS = "users"
     _MEMBERSHIPS = "memberships"
+    _CLASSES = "classes"
 
     @log
     def signup(
@@ -18,7 +49,7 @@ class AuthService:
         project_id: str,
         data: SignupRequest,
         google_uid: str | None = None,
-    ) -> SignupResponse:
+    ) -> DomainEvent:
         db = firestore.client()
         self._assert_no_duplicate(db, data.email, data.tax_id)
 
@@ -84,19 +115,62 @@ class AuthService:
 
         if data.auth_method == "email":
             link = auth.generate_email_verification_link(data.email)
-            EmailService().send_signup_confirmation(
-                to=data.email,
-                name=data.name,
-                link=link,
-                roles=data.roles,
-                class_ids=data.class_ids,
-                dependents=data.dependents,
+            class_map = self._fetch_class_names(db, data)
+
+            show_classes = bool(data.class_ids) and any(
+                r in data.roles for r in ("student", "teacher", "instructor")
+            )
+            show_dependents = "guardian" in data.roles and bool(data.dependents)
+
+            classes = (
+                [{"name": class_map.get(cid, cid)} for cid in data.class_ids]
+                if show_classes
+                else []
             )
 
-        return SignupResponse(uid=uid, status=approval_status)
+            dependents_data = []
+            if show_dependents:
+                for dep in data.dependents:
+                    dep_classes = ", ".join(
+                        class_map.get(cid, cid) for cid in dep.class_ids
+                    )
+                    dependents_data.append(
+                        {
+                            "name": dep.name,
+                            "age": _calculate_age(dep.birth_date),
+                            "classes": dep_classes,
+                        }
+                    )
+
+            return DomainEvent(
+                id="signup.email_confirmation",
+                payload=SignupEmailPayload(
+                    uid=uid,
+                    status=approval_status,
+                    to=data.email,
+                    name=data.name,
+                    email=data.email,
+                    phone=data.phone,
+                    roles_label=_roles_label(data.roles),
+                    link=link,
+                    show_classes=show_classes,
+                    classes=classes,
+                    show_dependents=show_dependents,
+                    dependents=dependents_data,
+                ),
+            )
+        else:
+            return DomainEvent(
+                id="signup.google_completed",
+                payload=SignupGooglePayload(
+                    uid=uid, status=approval_status
+                ),
+            )
 
     @log
-    def confirm_email_verified(self, uid: str, email: str) -> None:
+    def confirm_email_verified(
+        self, uid: str, email: str
+    ) -> DomainEvent | None:
         record = auth.get_user(uid)
         if not record.email_verified:
             raise HTTPException(
@@ -107,40 +181,81 @@ class AuthService:
         user_ref = db.collection(self._USERS).document(uid)
         user_doc = user_ref.get()
         if not user_doc.exists:
-            raise HTTPException(status_code=404, detail="Usuário não encontrado")
-        current_status = user_doc.to_dict().get("approvalStatus")
+            raise HTTPException(
+                status_code=404, detail="Usuário não encontrado"
+            )
+        user_data = user_doc.to_dict()
+        current_status = user_data.get("approvalStatus")
         if current_status != "pending_email":
-            return
+            return None
         user_ref.update({"approvalStatus": "pending_approval"})
+        return DomainEvent(
+            id="signup.account_received",
+            payload=AccountReceivedPayload(
+                to=email,
+                name=user_data.get("name", ""),
+            ),
+        )
 
     @log
-    def resend_verification(self, data: ResendVerificationRequest) -> None:
+    def resend_verification(
+        self, data: ResendVerificationRequest
+    ) -> DomainEvent | None:
         db = firestore.client()
         users = db.collection(self._USERS)
-        results = list(users.where("email", "==", data.email).limit(1).stream())
+        results = list(
+            users.where("email", "==", data.email).limit(1).stream()
+        )
         if not results:
-            return
+            return None
         user_data = results[0].to_dict()
         if user_data.get("approvalStatus") != "pending_email":
-            return
+            return None
         link = auth.generate_email_verification_link(data.email)
-        EmailService().send_verification_link(
-            to=data.email,
-            name=user_data.get("name", ""),
-            link=link,
+        return DomainEvent(
+            id="signup.resend_verification",
+            payload=ResendVerificationPayload(
+                to=data.email,
+                name=user_data.get("name", ""),
+                link=link,
+            ),
         )
+
+    def _fetch_class_names(
+        self, db, data: SignupRequest
+    ) -> dict[str, str]:
+        all_ids = set(data.class_ids)
+        for dep in data.dependents:
+            all_ids.update(dep.class_ids)
+        if not all_ids:
+            return {}
+        refs = [
+            db.collection(self._CLASSES).document(cid) for cid in all_ids
+        ]
+        docs = db.get_all(refs)
+        return {
+            doc.id: doc.to_dict().get("name", doc.id)
+            for doc in docs
+            if doc.exists
+        }
 
     def _assert_no_duplicate(self, db, email: str, tax_id: str) -> None:
         users = db.collection(self._USERS)
         if list(users.where("email", "==", email).limit(1).stream()):
-            raise HTTPException(status_code=409, detail="Email já cadastrado")
+            raise HTTPException(
+                status_code=409, detail="Email já cadastrado"
+            )
         if list(users.where("taxId", "==", tax_id).limit(1).stream()):
-            raise HTTPException(status_code=409, detail="CPF já cadastrado")
+            raise HTTPException(
+                status_code=409, detail="CPF já cadastrado"
+            )
 
     def _create_membership(
         self, db, project_id: str, user_id: str, roles: list[str], now: str
     ) -> None:
-        db.collection(self._MEMBERSHIPS).document(f"{project_id}_{user_id}").set(
+        db.collection(self._MEMBERSHIPS).document(
+            f"{project_id}_{user_id}"
+        ).set(
             {
                 "projectId": project_id,
                 "userId": user_id,

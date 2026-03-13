@@ -53,6 +53,7 @@ def _mock_db(email_exists: bool = False, cpf_exists: bool = False):
         return mock_col
 
     mock_db.collection.side_effect = collection_side_effect
+    mock_db.get_all.return_value = []
     return mock_db
 
 
@@ -67,12 +68,11 @@ class TestSignupEmail:
         with (
             patch("app.services.auth_service.firestore") as mock_fs,
             patch("app.services.auth_service.auth") as mock_auth,
-            patch("app.services.auth_service.EmailService") as mock_email,
+            patch("app.routers.auth.dispatcher") as mock_disp,
         ):
             mock_fs.client.return_value = _mock_db()
             mock_auth.create_user.return_value = _mock_auth_create()
             mock_auth.generate_email_verification_link.return_value = "http://verify"
-            mock_email.return_value.send_signup_confirmation.return_value = None
             response = client.post(
                 "/auth/signup",
                 json=_BASE_PAYLOAD,
@@ -82,6 +82,9 @@ class TestSignupEmail:
         body = response.json()
         assert body["uid"] == "uid-123"
         assert body["status"] == "pending_email"
+        mock_disp.dispatch.assert_called_once()
+        event = mock_disp.dispatch.call_args[0][0]
+        assert event.id == "signup.email_confirmation"
 
     def test_sem_x_project_id_retorna_422(self):
         response = client.post("/auth/signup", json=_BASE_PAYLOAD)
@@ -166,12 +169,11 @@ class TestSignupEmail:
         with (
             patch("app.services.auth_service.firestore") as mock_fs,
             patch("app.services.auth_service.auth") as mock_auth,
-            patch("app.services.auth_service.EmailService") as mock_email,
+            patch("app.routers.auth.dispatcher") as mock_disp,
         ):
             mock_fs.client.return_value = _mock_db()
             mock_auth.create_user.return_value = _mock_auth_create()
             mock_auth.generate_email_verification_link.return_value = "http://verify"
-            mock_email.return_value.send_signup_confirmation.return_value = None
             response = client.post(
                 "/auth/signup",
                 json=payload,
@@ -179,6 +181,11 @@ class TestSignupEmail:
             )
         assert response.status_code == 201
         assert response.json()["status"] == "pending_email"
+        event = mock_disp.dispatch.call_args[0][0]
+        assert event.payload.show_dependents is True
+        assert len(event.payload.dependents) == 1
+        assert event.payload.dependents[0]["name"] == "Maria Silva"
+        assert "ano" in event.payload.dependents[0]["age"]
 
     def test_role_invalida_retorna_422(self):
         payload = {**_BASE_PAYLOAD, "roles": ["admin"]}
@@ -188,6 +195,59 @@ class TestSignupEmail:
             headers={"X-Project-Id": _PROJECT_ID},
         )
         assert response.status_code == 422
+
+    def test_guardian_aluno_com_turmas_busca_nomes(self):
+        """RN-05 and RN-06: ages calculated, class names fetched."""
+        payload = {
+            **_BASE_PAYLOAD,
+            "roles": ["guardian", "student"],
+            "classIds": ["class-jj"],
+            "dependents": [
+                {
+                    "id": "dep-1",
+                    "name": "Pedro Silva",
+                    "birthDate": "15/06/2014",
+                    "taxId": None,
+                    "classIds": ["class-cap"],
+                }
+            ],
+        }
+        mock_class_jj = MagicMock()
+        mock_class_jj.exists = True
+        mock_class_jj.id = "class-jj"
+        mock_class_jj.to_dict.return_value = {"name": "Jiu Jitsu — Ter/Qui 18h"}
+
+        mock_class_cap = MagicMock()
+        mock_class_cap.exists = True
+        mock_class_cap.id = "class-cap"
+        mock_class_cap.to_dict.return_value = {"name": "Capoeira — Seg/Qua 17h"}
+
+        mock_db = _mock_db()
+        mock_db.get_all.return_value = [mock_class_jj, mock_class_cap]
+
+        with (
+            patch("app.services.auth_service.firestore") as mock_fs,
+            patch("app.services.auth_service.auth") as mock_auth,
+            patch("app.routers.auth.dispatcher") as mock_disp,
+        ):
+            mock_fs.client.return_value = mock_db
+            mock_auth.create_user.return_value = _mock_auth_create()
+            mock_auth.generate_email_verification_link.return_value = "http://verify"
+            response = client.post(
+                "/auth/signup",
+                json=payload,
+                headers={"X-Project-Id": _PROJECT_ID},
+            )
+        assert response.status_code == 201
+        event = mock_disp.dispatch.call_args[0][0]
+        p = event.payload
+        assert p.show_classes is True
+        assert p.show_dependents is True
+        assert p.classes == [{"name": "Jiu Jitsu — Ter/Qui 18h"}]
+        assert p.dependents[0]["name"] == "Pedro Silva"
+        assert "ano" in p.dependents[0]["age"]
+        assert p.dependents[0]["classes"] == "Capoeira — Seg/Qua 17h"
+        assert p.roles_label == "Responsável, Aluno"
 
 
 class TestSignupGoogle:
@@ -217,7 +277,7 @@ class TestSignupGoogle:
         with (
             patch("app.routers.auth.verify_id_token", return_value={"uid": "google-uid-456"}),
             patch("app.services.auth_service.firestore") as mock_fs,
-            patch("app.services.auth_service.EmailService"),
+            patch("app.routers.auth.dispatcher") as mock_disp,
         ):
             mock_fs.client.return_value = _mock_db()
             response = client.post(
@@ -232,6 +292,8 @@ class TestSignupGoogle:
         body = response.json()
         assert body["uid"] == "google-uid-456"
         assert body["status"] == "pending_approval"
+        event = mock_disp.dispatch.call_args[0][0]
+        assert event.id == "signup.google_completed"
 
 
 class TestEmailVerified:
@@ -250,6 +312,7 @@ class TestEmailVerified:
         with (
             patch("app.security.middleware.verify_id_token", return_value=self._CLAIMS),
             patch("app.services.auth_service.auth") as mock_auth,
+            patch("app.routers.auth.dispatcher"),
         ):
             mock_auth.get_user.return_value = mock_record
             response = client.post(
@@ -267,7 +330,10 @@ class TestEmailVerified:
 
         mock_user_doc = MagicMock()
         mock_user_doc.exists = True
-        mock_user_doc.to_dict.return_value = {"approvalStatus": "pending_email"}
+        mock_user_doc.to_dict.return_value = {
+            "approvalStatus": "pending_email",
+            "name": "João Silva",
+        }
 
         mock_db = MagicMock()
         mock_db.collection.return_value.document.return_value.get.return_value = mock_user_doc
@@ -277,6 +343,7 @@ class TestEmailVerified:
             patch("app.security.middleware.verify_id_token", return_value=self._CLAIMS),
             patch("app.services.auth_service.auth") as mock_auth,
             patch("app.services.auth_service.firestore") as mock_fs,
+            patch("app.routers.auth.dispatcher") as mock_disp,
         ):
             mock_auth.get_user.return_value = mock_record
             mock_fs.client.return_value = mock_db
@@ -289,6 +356,10 @@ class TestEmailVerified:
             )
         assert response.status_code == 200
         assert response.json()["status"] == "pending_approval"
+        mock_disp.dispatch.assert_called_once()
+        event = mock_disp.dispatch.call_args[0][0]
+        assert event.id == "signup.account_received"
+        assert event.payload.name == "João Silva"
 
     def test_ja_aprovado_nao_reverte_retorna_200(self):
         mock_record = MagicMock()
@@ -305,6 +376,7 @@ class TestEmailVerified:
             patch("app.security.middleware.verify_id_token", return_value=self._CLAIMS),
             patch("app.services.auth_service.auth") as mock_auth,
             patch("app.services.auth_service.firestore") as mock_fs,
+            patch("app.routers.auth.dispatcher") as mock_disp,
         ):
             mock_auth.get_user.return_value = mock_record
             mock_fs.client.return_value = mock_db
@@ -317,6 +389,7 @@ class TestEmailVerified:
             )
         assert response.status_code == 200
         mock_db.collection.return_value.document.return_value.update.assert_not_called()
+        mock_disp.dispatch.assert_not_called()
 
 
 class TestResendVerification:
@@ -335,11 +408,10 @@ class TestResendVerification:
         with (
             patch("app.services.auth_service.firestore") as mock_fs,
             patch("app.services.auth_service.auth") as mock_auth,
-            patch("app.services.auth_service.EmailService") as mock_email,
+            patch("app.routers.auth.dispatcher") as mock_disp,
         ):
             mock_fs.client.return_value = mock_db
             mock_auth.generate_email_verification_link.return_value = "http://verify"
-            mock_email.return_value.send_verification_link.return_value = None
             response = client.post(
                 "/auth/resend-verification",
                 json={"email": "joao@example.com"},
@@ -347,6 +419,9 @@ class TestResendVerification:
             )
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
+        mock_disp.dispatch.assert_called_once()
+        event = mock_disp.dispatch.call_args[0][0]
+        assert event.id == "signup.resend_verification"
 
     def test_email_nao_encontrado_retorna_200_silencioso(self):
         mock_db = MagicMock()
@@ -354,7 +429,10 @@ class TestResendVerification:
             []
         )
 
-        with patch("app.services.auth_service.firestore") as mock_fs:
+        with (
+            patch("app.services.auth_service.firestore") as mock_fs,
+            patch("app.routers.auth.dispatcher") as mock_disp,
+        ):
             mock_fs.client.return_value = mock_db
             response = client.post(
                 "/auth/resend-verification",
@@ -363,3 +441,4 @@ class TestResendVerification:
             )
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
+        mock_disp.dispatch.assert_not_called()
