@@ -23,8 +23,8 @@ class TestMailerSendAdapter:
                 mock_builder = MagicMock()
                 mock_builder.from_email.return_value = mock_builder
                 mock_builder.to.return_value = mock_builder
-                mock_builder.template_id.return_value = mock_builder
-                mock_builder.personalization.return_value = mock_builder
+                mock_builder.template.return_value = mock_builder
+                mock_builder.personalize.return_value = mock_builder
                 mock_builder_cls.return_value = mock_builder
 
                 from app.notifications.adapters.mailersend import (
@@ -40,9 +40,9 @@ class TestMailerSendAdapter:
 
                 mock_client_cls.assert_called_once()
                 mock_client.emails.send.assert_called_once()
-                mock_builder.template_id.assert_called_once_with("tmpl-123")
-                mock_builder.personalization.assert_called_once_with(
-                    [{"email": "destino@example.com", "data": {"name": "Test"}}]
+                mock_builder.template.assert_called_once_with("tmpl-123")
+                mock_builder.personalize.assert_called_once_with(
+                    "destino@example.com", name="Test"
                 )
 
 
