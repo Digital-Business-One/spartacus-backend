@@ -35,6 +35,31 @@ class TestMailerSendAdapter:
             assert email_request.personalization[0].email == "destino@example.com"
             assert email_request.personalization[0].data == {"name": "Test"}
 
+    def test_send_with_email_key_in_data(self):
+        """Garante que data contendo 'email' não conflita com o parâmetro to."""
+        with patch(
+            "app.notifications.adapters.mailersend.MailerSendClient"
+        ) as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            from app.notifications.adapters.mailersend import MailerSendAdapter
+
+            MailerSendAdapter().send(
+                event_id="signup.email_confirmation",
+                template_id="tmpl-456",
+                to="carlos@email.com",
+                data={
+                    "name": "Carlos",
+                    "email": "carlos@email.com",
+                    "phone": "(65) 99887-6543",
+                },
+            )
+
+            email_request = mock_client.emails.send.call_args[0][0]
+            assert email_request.personalization[0].data["email"] == "carlos@email.com"
+            assert email_request.personalization[0].email == "carlos@email.com"
+
 
 _PROJECT_ID = "test-project"
 _VALID_CLAIMS = {

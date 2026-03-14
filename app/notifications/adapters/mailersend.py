@@ -17,7 +17,7 @@ class MailerSendAdapter:
             .to(to)
             .subject("")
             .template(template_id)
-            .personalize(to, **data)
+            .personalize_many([{"email": to, "data": data}])
             .build()
         )
         MailerSendClient().emails.send(email_request)
