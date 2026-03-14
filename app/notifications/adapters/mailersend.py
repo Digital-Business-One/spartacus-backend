@@ -15,6 +15,7 @@ class MailerSendAdapter:
             EmailBuilder()
             .from_email(self._FROM_EMAIL, self._FROM_NAME)
             .to(to)
+            .subject("")
             .template(template_id)
             .personalize(to, **data)
             .build()
