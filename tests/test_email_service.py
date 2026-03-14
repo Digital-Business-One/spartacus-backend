@@ -10,40 +10,30 @@ client = TestClient(app)
 
 
 class TestMailerSendAdapter:
-    def test_send_chama_sdk(self):
+    def test_send_builds_email_and_calls_sdk(self):
+        """Usa o EmailBuilder real para garantir compatibilidade com o SDK."""
         with patch(
             "app.notifications.adapters.mailersend.MailerSendClient"
         ) as mock_client_cls:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
-            with patch(
-                "app.notifications.adapters.mailersend.EmailBuilder"
-            ) as mock_builder_cls:
-                mock_builder = MagicMock()
-                mock_builder.from_email.return_value = mock_builder
-                mock_builder.to.return_value = mock_builder
-                mock_builder.template_id.return_value = mock_builder
-                mock_builder.personalization.return_value = mock_builder
-                mock_builder_cls.return_value = mock_builder
+            from app.notifications.adapters.mailersend import MailerSendAdapter
 
-                from app.notifications.adapters.mailersend import (
-                    MailerSendAdapter,
-                )
+            MailerSendAdapter().send(
+                event_id="test.event",
+                template_id="tmpl-123",
+                to="destino@example.com",
+                data={"name": "Test"},
+            )
 
-                MailerSendAdapter().send(
-                    event_id="test.event",
-                    template_id="tmpl-123",
-                    to="destino@example.com",
-                    data={"name": "Test"},
-                )
-
-                mock_client_cls.assert_called_once()
-                mock_client.emails.send.assert_called_once()
-                mock_builder.template_id.assert_called_once_with("tmpl-123")
-                mock_builder.personalization.assert_called_once_with(
-                    [{"email": "destino@example.com", "data": {"name": "Test"}}]
-                )
+            mock_client_cls.assert_called_once()
+            mock_client.emails.send.assert_called_once()
+            email_request = mock_client.emails.send.call_args[0][0]
+            assert email_request.template_id == "tmpl-123"
+            assert email_request.to[0].email == "destino@example.com"
+            assert email_request.personalization[0].email == "destino@example.com"
+            assert email_request.personalization[0].data == {"name": "Test"}
 
 
 _PROJECT_ID = "test-project"
