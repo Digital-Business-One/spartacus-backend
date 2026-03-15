@@ -6,9 +6,11 @@ services:
       dockerfile: Dockerfile
     working_dir: /app
     command: >
-      bash -c "echo '{\"emulators\":{\"auth\":{\"port\":9099,\"host\":\"0.0.0.0\"},\"firestore\":{\"port\":8080,\"host\":\"0.0.0.0\"},\"storage\":{\"port\":9199,\"host\":\"0.0.0.0\"},\"ui\":{\"enabled\":true,\"host\":\"0.0.0.0\",\"port\":4000}}}' > /app/firebase.json &&
+      bash -c "
+      echo 'rules_version = \"2\"; service firebase.storage { match /b/{bucket}/o { match /{allPaths=**} { allow read, write: if true; } } }' > /app/storage.rules &&
+      echo '{\"storage\":{\"rules\":\"storage.rules\"},\"emulators\":{\"auth\":{\"port\":9099,\"host\":\"0.0.0.0\"},\"firestore\":{\"port\":8080,\"host\":\"0.0.0.0\"},\"storage\":{\"port\":9199,\"host\":\"0.0.0.0\"},\"ui\":{\"enabled\":true,\"host\":\"0.0.0.0\",\"port\":4000}}}' > /app/firebase.json &&
       npx -y firebase-tools@latest emulators:start
-      --project demo-spartacus
+      --project spartacus-artes-marciais
       --only firestore,auth,storage"
     ports:
       - "4000:4000"   # Emulator UI
@@ -16,7 +18,7 @@ services:
       - "9099:9099"   # Auth
       - "9199:9199"   # Storage
     environment:
-      - GOOGLE_CLOUD_PROJECT=demo-spartacus
+      - GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4000"]
       interval: 10s

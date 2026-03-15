@@ -20,9 +20,16 @@ class NotificationDispatcher:
                 reason="no_template",
             )
             return
-        self._port.send(
-            event_id=event.id,
-            template_id=template_id,
-            to=event.payload.to,
-            data=event.payload.personalization(),
-        )
+        try:
+            self._port.send(
+                event_id=event.id,
+                template_id=template_id,
+                to=event.payload.to,
+                data=event.payload.personalization(),
+            )
+        except Exception:
+            logger.error(
+                "notification_failed",
+                event_id=event.id,
+                exc_info=True,
+            )

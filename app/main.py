@@ -1,5 +1,8 @@
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from firebase_admin import initialize_app
+
+load_dotenv()
 
 from app.logging.config import configure_logging
 from app.logging.middleware import LoggingMiddleware

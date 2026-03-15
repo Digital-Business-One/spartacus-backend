@@ -5,13 +5,17 @@ Usage (local dev with emulators running):
     FIRESTORE_EMULATOR_HOST=localhost:8080 \
     FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 \
     FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 \
-    GOOGLE_CLOUD_PROJECT=demo-spartacus \
-    ROOT_PROJECT_ID=demo-spartacus \
+    GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais \
+    ROOT_PROJECT_ID=spartacus-artes-marciais \
     uv run python seeds/seed.py
 """
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import firebase_admin
 from firebase_admin import firestore, storage
@@ -34,7 +38,7 @@ _ROOT_DATA = {
 
 def run() -> None:
     firebase_admin.initialize_app()
-    project_id = os.getenv("ROOT_PROJECT_ID", "demo-spartacus")
+    project_id = os.getenv("ROOT_PROJECT_ID", "spartacus-artes-marciais")
     gcp_project = os.getenv("GOOGLE_CLOUD_PROJECT", project_id)
 
     # Upload logo to Firebase Storage
