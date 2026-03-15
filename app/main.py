@@ -1,3 +1,4 @@
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from firebase_admin import initialize_app
 
@@ -8,6 +9,7 @@ from app.security.context import auth_ctx
 from app.security.decorator import public, register_public_routes
 from app.security.middleware import AuthMiddleware
 
+load_dotenv()
 configure_logging()
 
 app = FastAPI(title="Spartacus API", version="0.1.0")

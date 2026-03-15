@@ -4,8 +4,8 @@ from app.logging.decorator import log
 
 
 class MailerSendAdapter:
-    _FROM_EMAIL = "noreply@horadofluxo.com.br"
-    _FROM_NAME = "Spartacus"
+    _FROM_EMAIL = "noreply@spartacus.app.br"
+    _FROM_NAME = "Spartacus Artes Marciais"
 
     @log(mask=["to"])
     def send(
@@ -17,7 +17,7 @@ class MailerSendAdapter:
             .to(to)
             .subject("")
             .template(template_id)
-            .personalize(to, **data)
+            .personalize_many([{"email": to, "data": data}])
             .build()
         )
         MailerSendClient().emails.send(email_request)

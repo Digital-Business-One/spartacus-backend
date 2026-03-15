@@ -21,8 +21,8 @@ from fastapi.testclient import TestClient
 
 # ── Constantes dos emuladores ─────────────────────────────────────────────────
 
-_EMULATOR_PROJECT = "demo-spartacus"
-_ROOT_PROJECT_ID = "demo-spartacus"
+_EMULATOR_PROJECT = "spartacus-artes-marciais"
+_ROOT_PROJECT_ID = "spartacus-artes-marciais"
 _FIRESTORE_HOST = "localhost:8080"
 _AUTH_HOST = "localhost:9099"
 _STORAGE_HOST = "localhost:9199"
