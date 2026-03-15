@@ -9,7 +9,7 @@ Diferença dos testes unitários:
 import os
 from unittest.mock import patch
 
-_ROOT_ID = "demo-spartacus"
+_ROOT_ID = "spartacus-artes-marciais"
 _NEW_PROJECT_ID = "integration-test-project"
 _AUTH = "Bearer tok"
 

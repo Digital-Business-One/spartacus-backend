@@ -6,8 +6,8 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "firebase-admin>=6.5",
-  "mailersend>=1.0",
   "structlog>=24.0",
+  "python-dotenv>=1.2.1",
 ]
 
 [dependency-groups]

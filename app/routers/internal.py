@@ -1,7 +1,7 @@
 import os
 
 from fastapi import APIRouter, HTTPException
-from mailersend import EmailBuilder, MailerSendClient
+from firebase_admin import firestore
 
 from app.logging.decorator import log
 
@@ -16,16 +16,20 @@ def test_email(to: str):
             status_code=403,
             detail="Disponível apenas em ambiente de desenvolvimento",
         )
-    email_request = (
-        EmailBuilder()
-        .from_email("noreply@horadofluxo.com.br", "Spartacus")
-        .to(to)
-        .subject("[Spartacus] Teste de e-mail transacional")
-        .html(
-            "<h1>Teste</h1>"
-            "<p>E-mail de teste do backend Spartacus via MailerSend.</p>"
-        )
-        .build()
+    db = firestore.client()
+    db.collection("emails").add(
+        {
+            "to": [{"email": to}],
+            "from": {
+                "email": "noreply@spartacus.app.br",
+                "name": "Spartacus Artes Marciais",
+            },
+            "subject": "[Spartacus] Teste de e-mail transacional",
+            "html": (
+                "<h1>Teste</h1>"
+                "<p>E-mail de teste do backend Spartacus.</p>"
+            ),
+            "tags": ["internal.test"],
+        }
     )
-    MailerSendClient().emails.send(email_request)
-    return {"status": "sent", "to": to}
+    return {"status": "queued", "to": to}
