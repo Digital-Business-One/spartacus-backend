@@ -28,7 +28,7 @@ class TestFirestoreMailAdapter:
                 data={"name": "Test"},
             )
 
-            mock_db.collection.assert_called_once_with("mail")
+            mock_db.collection.assert_called_once_with("emails")
             doc = mock_db.collection.return_value.add.call_args[0][0]
             assert doc["template_id"] == "tmpl-123"
             assert doc["to"] == [{"email": "destino@example.com"}]
@@ -111,7 +111,7 @@ class TestEndpointEmailTest:
             "status": "queued",
             "to": "test@example.com",
         }
-        mock_db.collection.assert_called_once_with("mail")
+        mock_db.collection.assert_called_once_with("emails")
         doc = mock_db.collection.return_value.add.call_args[0][0]
         assert doc["to"] == [{"email": "test@example.com"}]
         assert "html" in doc

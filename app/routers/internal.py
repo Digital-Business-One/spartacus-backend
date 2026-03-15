@@ -17,7 +17,7 @@ def test_email(to: str):
             detail="Disponível apenas em ambiente de desenvolvimento",
         )
     db = firestore.client()
-    db.collection("mail").add(
+    db.collection("emails").add(
         {
             "to": [{"email": to}],
             "from": {

@@ -63,7 +63,7 @@ class TestSignupEmailConfirmation:
             dispatcher = NotificationDispatcher(port=adapter)
             dispatcher.dispatch(self._event())
 
-        mock_db.collection.assert_called_once_with("mail")
+        mock_db.collection.assert_called_once_with("emails")
         doc = mock_db.collection.return_value.add.call_args[0][0]
         assert doc["template_id"] == "v69oxl59w12g785k"
         assert doc["to"] == [{"email": "carlos@email.com"}]

@@ -2,7 +2,7 @@ from firebase_admin import firestore
 
 from app.logging.decorator import log
 
-_COLLECTION = "mail"
+_COLLECTION = "emails"
 _FROM_EMAIL = "noreply@spartacus.app.br"
 _FROM_NAME = "Spartacus Artes Marciais"
 
