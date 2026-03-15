@@ -1,4 +1,4 @@
-from app.notifications.adapters.mailersend import MailerSendAdapter
+from app.notifications.adapters.firestore_mail import FirestoreMailAdapter
 from app.notifications.dispatcher import NotificationDispatcher
 
-dispatcher = NotificationDispatcher(port=MailerSendAdapter())
+dispatcher = NotificationDispatcher(port=FirestoreMailAdapter())

@@ -1,16 +1,16 @@
 """
 Teste de integração do pipeline de notificação.
 
-Exercita a cadeia completa: DomainEvent → Dispatcher → Adapter → EmailBuilder (real)
-Só o MailerSendClient (HTTP) é mockado.
+Exercita a cadeia completa: DomainEvent → Dispatcher → FirestoreMailAdapter
+O Firestore é mockado — valida que o documento correto é escrito na collection 'mail'.
 
-Esses testes usam payloads realistas (iguais aos de produção) para garantir
-que mudanças no SDK ou nos dados não quebrem silenciosamente.
+Usa payloads realistas (iguais aos de produção) para garantir que mudanças
+nos dados não quebrem silenciosamente.
 """
 
 from unittest.mock import MagicMock, patch
 
-from app.notifications.adapters.mailersend import MailerSendAdapter
+from app.notifications.adapters.firestore_mail import FirestoreMailAdapter
 from app.notifications.dispatcher import NotificationDispatcher
 from app.notifications.models import (
     AccountReceivedPayload,
@@ -20,9 +20,15 @@ from app.notifications.models import (
 )
 
 
-def _make_dispatcher(mock_client):
-    adapter = MailerSendAdapter()
-    return NotificationDispatcher(port=adapter)
+def _make_dispatcher_and_db():
+    mock_db = MagicMock()
+    with patch(
+        "app.notifications.adapters.firestore_mail.firestore"
+    ) as mock_fs:
+        mock_fs.client.return_value = mock_db
+        adapter = FirestoreMailAdapter()
+        dispatcher = NotificationDispatcher(port=adapter)
+    return dispatcher, mock_db, mock_fs
 
 
 class TestSignupEmailConfirmation:
@@ -47,30 +53,30 @@ class TestSignupEmailConfirmation:
             ),
         )
 
-    @patch("app.notifications.adapters.mailersend.MailerSendClient")
-    def test_dispatch_builds_valid_email_request(self, mock_client_cls):
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
+    def test_dispatch_writes_mail_document(self):
+        mock_db = MagicMock()
+        with patch(
+            "app.notifications.adapters.firestore_mail.firestore"
+        ) as mock_fs:
+            mock_fs.client.return_value = mock_db
+            adapter = FirestoreMailAdapter()
+            dispatcher = NotificationDispatcher(port=adapter)
+            dispatcher.dispatch(self._event())
 
-        dispatcher = _make_dispatcher(mock_client)
-        dispatcher.dispatch(self._event())
+        mock_db.collection.assert_called_once_with("mail")
+        doc = mock_db.collection.return_value.add.call_args[0][0]
+        assert doc["template_id"] == "v69oxl59w12g785k"
+        assert doc["to"] == [{"email": "carlos@email.com"}]
+        assert doc["from"]["email"] == "noreply@spartacus.app.br"
+        assert doc["tags"] == ["signup.email_confirmation"]
+        p = doc["personalization"][0]
+        assert p["email"] == "carlos@email.com"
+        assert p["data"]["name"] == "Carlos Eduardo da Silva"
+        assert p["data"]["phone"] == "(65) 99887-6543"
+        assert p["data"]["link"] == "https://example.com/verify?code=123456"
 
-        mock_client.emails.send.assert_called_once()
-        req = mock_client.emails.send.call_args[0][0]
-        assert req.template_id == "v69oxl59w12g785k"
-        assert req.to[0].email == "carlos@email.com"
-        p = req.personalization[0]
-        assert p.email == "carlos@email.com"
-        assert p.data["email"] == "carlos@email.com"
-        assert p.data["name"] == "Carlos Eduardo da Silva"
-        assert p.data["phone"] == "(65) 99887-6543"
-        assert p.data["link"] == "https://example.com/verify?code=123456"
-
-    @patch("app.notifications.adapters.mailersend.MailerSendClient")
-    def test_dispatch_with_dependents(self, mock_client_cls):
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
+    def test_dispatch_with_dependents(self):
+        mock_db = MagicMock()
         event = DomainEvent(
             id="signup.email_confirmation",
             payload=SignupEmailPayload(
@@ -86,16 +92,25 @@ class TestSignupEmailConfirmation:
                 classes=[{"name": "Capoeira — Seg/Qua 17h"}],
                 show_dependents=True,
                 dependents=[
-                    {"name": "Pedro", "age": "8 anos", "classes": "Capoeira — Seg/Qua 17h"}
+                    {
+                        "name": "Pedro",
+                        "age": "8 anos",
+                        "classes": "Capoeira — Seg/Qua 17h",
+                    }
                 ],
             ),
         )
 
-        dispatcher = _make_dispatcher(mock_client)
-        dispatcher.dispatch(event)
+        with patch(
+            "app.notifications.adapters.firestore_mail.firestore"
+        ) as mock_fs:
+            mock_fs.client.return_value = mock_db
+            adapter = FirestoreMailAdapter()
+            dispatcher = NotificationDispatcher(port=adapter)
+            dispatcher.dispatch(event)
 
-        req = mock_client.emails.send.call_args[0][0]
-        data = req.personalization[0].data
+        doc = mock_db.collection.return_value.add.call_args[0][0]
+        data = doc["personalization"][0]["data"]
         assert data["show_dependents"] is True
         assert data["dependents"][0]["name"] == "Pedro"
 
@@ -103,11 +118,8 @@ class TestSignupEmailConfirmation:
 class TestAccountReceived:
     """Pipeline completo para signup.account_received."""
 
-    @patch("app.notifications.adapters.mailersend.MailerSendClient")
-    def test_dispatch_sends_account_received(self, mock_client_cls):
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
+    def test_dispatch_writes_account_received(self):
+        mock_db = MagicMock()
         event = DomainEvent(
             id="signup.account_received",
             payload=AccountReceivedPayload(
@@ -116,22 +128,24 @@ class TestAccountReceived:
             ),
         )
 
-        dispatcher = _make_dispatcher(mock_client)
-        dispatcher.dispatch(event)
+        with patch(
+            "app.notifications.adapters.firestore_mail.firestore"
+        ) as mock_fs:
+            mock_fs.client.return_value = mock_db
+            adapter = FirestoreMailAdapter()
+            dispatcher = NotificationDispatcher(port=adapter)
+            dispatcher.dispatch(event)
 
-        req = mock_client.emails.send.call_args[0][0]
-        assert req.template_id == "z86org8zknegew13"
-        assert req.personalization[0].data["name"] == "Carlos Eduardo da Silva"
+        doc = mock_db.collection.return_value.add.call_args[0][0]
+        assert doc["template_id"] == "z86org8zknegew13"
+        assert doc["personalization"][0]["data"]["name"] == "Carlos Eduardo da Silva"
 
 
 class TestResendVerification:
     """Pipeline completo para signup.resend_verification."""
 
-    @patch("app.notifications.adapters.mailersend.MailerSendClient")
-    def test_dispatch_sends_resend_email(self, mock_client_cls):
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
+    def test_dispatch_writes_resend_email(self):
+        mock_db = MagicMock()
         event = DomainEvent(
             id="signup.resend_verification",
             payload=ResendVerificationPayload(
@@ -141,29 +155,38 @@ class TestResendVerification:
             ),
         )
 
-        dispatcher = _make_dispatcher(mock_client)
-        dispatcher.dispatch(event)
+        with patch(
+            "app.notifications.adapters.firestore_mail.firestore"
+        ) as mock_fs:
+            mock_fs.client.return_value = mock_db
+            adapter = FirestoreMailAdapter()
+            dispatcher = NotificationDispatcher(port=adapter)
+            dispatcher.dispatch(event)
 
-        req = mock_client.emails.send.call_args[0][0]
-        assert req.template_id == "pxkjn41w1j5lz781"
-        assert req.personalization[0].data["name"] == "João Silva"
-        assert req.personalization[0].data["link"] == "https://example.com/verify?code=abc"
+        doc = mock_db.collection.return_value.add.call_args[0][0]
+        assert doc["template_id"] == "pxkjn41w1j5lz781"
+        assert doc["personalization"][0]["data"]["name"] == "João Silva"
+        assert doc["personalization"][0]["data"]["link"] == (
+            "https://example.com/verify?code=abc"
+        )
 
 
 class TestUnregisteredEvent:
     """Evento sem template registrado deve ser ignorado."""
 
-    @patch("app.notifications.adapters.mailersend.MailerSendClient")
-    def test_unknown_event_skips_send(self, mock_client_cls):
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
+    def test_unknown_event_skips_write(self):
+        mock_db = MagicMock()
         event = DomainEvent(
             id="signup.google_completed",
             payload=MagicMock(spec=[]),
         )
 
-        dispatcher = _make_dispatcher(mock_client)
-        dispatcher.dispatch(event)
+        with patch(
+            "app.notifications.adapters.firestore_mail.firestore"
+        ) as mock_fs:
+            mock_fs.client.return_value = mock_db
+            adapter = FirestoreMailAdapter()
+            dispatcher = NotificationDispatcher(port=adapter)
+            dispatcher.dispatch(event)
 
-        mock_client.emails.send.assert_not_called()
+        mock_db.collection.return_value.add.assert_not_called()
