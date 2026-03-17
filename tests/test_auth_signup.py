@@ -9,6 +9,10 @@ client = TestClient(app, raise_server_exceptions=False)
 
 _PROJECT_ID = "spartacus"
 
+
+class _FakeEmailAlreadyExistsError(Exception):
+    pass
+
 _BASE_PAYLOAD = {
     "authMethod": "email",
     "email": "joao@example.com",
@@ -31,7 +35,11 @@ _BASE_PAYLOAD = {
 }
 
 
-def _mock_db(email_exists: bool = False, cpf_exists: bool = False):
+def _mock_db(
+    email_exists: bool = False,
+    cpf_exists: bool = False,
+    user_doc=None,
+):
     """Build a Firestore client mock for duplicate checks and writes."""
     mock_db = MagicMock()
 
@@ -50,6 +58,8 @@ def _mock_db(email_exists: bool = False, cpf_exists: bool = False):
 
         mock_col.where.side_effect = where_side_effect
         mock_col.document.return_value.set.return_value = None
+        if user_doc is not None:
+            mock_col.document.return_value.get.return_value = user_doc
         return mock_col
 
     mock_db.collection.side_effect = collection_side_effect
@@ -61,6 +71,40 @@ def _mock_auth_create(uid: str = "uid-123"):
     record = MagicMock()
     record.uid = uid
     return record
+
+
+class TestCheckEmail:
+    def test_email_disponivel_retorna_available_true(self):
+        mock_db = MagicMock()
+        col = mock_db.collection.return_value
+        col.where.return_value.limit.return_value.stream.return_value = (
+            iter([])
+        )
+        with patch("app.services.auth_service.firestore") as mock_fs:
+            mock_fs.client.return_value = mock_db
+            response = client.get(
+                "/auth/check-email", params={"email": "novo@example.com"}
+            )
+        assert response.status_code == 200
+        assert response.json()["available"] is True
+
+    def test_email_cadastrado_retorna_available_false(self):
+        mock_db = MagicMock()
+        col = mock_db.collection.return_value
+        col.where.return_value.limit.return_value.stream.return_value = (
+            iter([MagicMock()])
+        )
+        with patch("app.services.auth_service.firestore") as mock_fs:
+            mock_fs.client.return_value = mock_db
+            response = client.get(
+                "/auth/check-email", params={"email": "joao@example.com"}
+            )
+        assert response.status_code == 200
+        assert response.json()["available"] is False
+
+    def test_sem_parametro_email_retorna_422(self):
+        response = client.get("/auth/check-email")
+        assert response.status_code == 422
 
 
 class TestSignupEmail:
@@ -195,6 +239,63 @@ class TestSignupEmail:
             headers={"X-Project-Id": _PROJECT_ID},
         )
         assert response.status_code == 422
+
+    def test_signup_idempotente_auth_existe_firestore_nao_retorna_201(self):
+        """Auth user exists but Firestore doc doesn't — reuse UID, complete signup."""
+        mock_existing = MagicMock()
+        mock_existing.uid = "existing-uid-789"
+
+        mock_user_doc = MagicMock()
+        mock_user_doc.exists = False
+
+        with (
+            patch("app.services.auth_service.firestore") as mock_fs,
+            patch("app.services.auth_service.auth") as mock_auth,
+            patch("app.routers.auth.dispatcher"),
+        ):
+            mock_auth.EmailAlreadyExistsError = _FakeEmailAlreadyExistsError
+            mock_fs.client.return_value = _mock_db(user_doc=mock_user_doc)
+            mock_auth.create_user.side_effect = _FakeEmailAlreadyExistsError("exists")
+            mock_auth.get_user_by_email.return_value = mock_existing
+            mock_auth.generate_email_verification_link.return_value = "http://verify"
+            response = client.post(
+                "/auth/signup",
+                json=_BASE_PAYLOAD,
+                headers={"X-Project-Id": _PROJECT_ID},
+            )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["uid"] == "existing-uid-789"
+        assert body["status"] == "pending_email"
+        mock_auth.update_user.assert_called_once_with(
+            "existing-uid-789",
+            password="senha1234",
+            display_name="João Silva",
+        )
+
+    def test_signup_duplicado_real_auth_e_firestore_existem_retorna_409(self):
+        """Both Auth and Firestore user exist — real duplicate, 409."""
+        mock_existing = MagicMock()
+        mock_existing.uid = "existing-uid-789"
+
+        mock_user_doc = MagicMock()
+        mock_user_doc.exists = True
+
+        with (
+            patch("app.services.auth_service.firestore") as mock_fs,
+            patch("app.services.auth_service.auth") as mock_auth,
+        ):
+            mock_auth.EmailAlreadyExistsError = _FakeEmailAlreadyExistsError
+            mock_fs.client.return_value = _mock_db(user_doc=mock_user_doc)
+            mock_auth.create_user.side_effect = _FakeEmailAlreadyExistsError("exists")
+            mock_auth.get_user_by_email.return_value = mock_existing
+            response = client.post(
+                "/auth/signup",
+                json=_BASE_PAYLOAD,
+                headers={"X-Project-Id": _PROJECT_ID},
+            )
+        assert response.status_code == 409
+        assert "Email" in response.json()["detail"]
 
     def test_guardian_aluno_com_turmas_busca_nomes(self):
         """RN-05 and RN-06: ages calculated, class names fetched."""
