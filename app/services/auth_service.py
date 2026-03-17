@@ -44,6 +44,18 @@ class AuthService:
     _CLASSES = "classes"
 
     @log
+    def check_email(self, email: str) -> bool:
+        """Return True if email is available (not in Firestore)."""
+        db = firestore.client()
+        results = list(
+            db.collection(self._USERS)
+            .where("email", "==", email.lower())
+            .limit(1)
+            .stream()
+        )
+        return len(results) == 0
+
+    @log
     def signup(
         self,
         project_id: str,
@@ -62,7 +74,18 @@ class AuthService:
                 )
                 uid = record.uid
             except auth.EmailAlreadyExistsError:
-                raise HTTPException(status_code=409, detail="Email já cadastrado")
+                existing = auth.get_user_by_email(data.email)
+                user_doc = db.collection(self._USERS).document(existing.uid).get()
+                if user_doc.exists:
+                    raise HTTPException(
+                        status_code=409, detail="Email já cadastrado"
+                    )
+                auth.update_user(
+                    existing.uid,
+                    password=data.password,
+                    display_name=data.name,
+                )
+                uid = existing.uid
             approval_status = "pending_email"
         else:
             uid = google_uid

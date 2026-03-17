@@ -4,6 +4,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from app.logging.decorator import log
 from app.models.auth import (
+    CheckEmailResponse,
     EmailVerifiedResponse,
     ResendVerificationRequest,
     SignupRequest,
@@ -16,6 +17,14 @@ from app.security.firebase import verify_id_token
 from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@log
+@router.get("/check-email")
+@public
+def check_email(email: str) -> CheckEmailResponse:
+    available = AuthService().check_email(email)
+    return CheckEmailResponse(available=available)
 
 
 @log
