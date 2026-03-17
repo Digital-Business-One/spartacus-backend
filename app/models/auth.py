@@ -164,3 +164,7 @@ class ResendVerificationRequest(BaseModel):
 
 class EmailVerifiedResponse(BaseModel):
     status: str
+
+
+class CheckEmailResponse(BaseModel):
+    available: bool
