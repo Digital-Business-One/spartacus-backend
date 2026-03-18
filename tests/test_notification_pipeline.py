@@ -66,6 +66,7 @@ class TestSignupEmailConfirmation:
         mock_db.collection.assert_called_once_with("emails")
         doc = mock_db.collection.return_value.add.call_args[0][0]
         assert doc["template_id"] == "v69oxl59w12g785k"
+        assert doc["subject"] == "Confirme seu e-mail — Spartacus"
         assert doc["to"] == [{"email": "carlos@email.com"}]
         assert doc["from"]["email"] == "noreply@spartacus.app.br"
         assert doc["tags"] == ["signup.email_confirmation"]

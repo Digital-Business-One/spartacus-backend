@@ -12,18 +12,20 @@ class NotificationDispatcher:
         self._registry = registry or DictRegistry()
 
     def dispatch(self, event: DomainEvent) -> None:
-        template_id = self._registry.find_template(event.id)
-        if not template_id:
+        result = self._registry.find_rule(event.id)
+        if not result:
             logger.info(
                 "notification_skipped",
                 event_id=event.id,
                 reason="no_template",
             )
             return
+        template_id, subject = result
         try:
             self._port.send(
                 event_id=event.id,
                 template_id=template_id,
+                subject=subject,
                 to=event.payload.to,
                 data=event.payload.personalization(),
             )

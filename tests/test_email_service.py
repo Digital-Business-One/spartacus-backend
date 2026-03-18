@@ -24,6 +24,7 @@ class TestFirestoreMailAdapter:
             FirestoreMailAdapter().send(
                 event_id="test.event",
                 template_id="tmpl-123",
+                subject="Assunto teste",
                 to="destino@example.com",
                 data={"name": "Test"},
             )
@@ -31,6 +32,7 @@ class TestFirestoreMailAdapter:
             mock_db.collection.assert_called_once_with("emails")
             doc = mock_db.collection.return_value.add.call_args[0][0]
             assert doc["template_id"] == "tmpl-123"
+            assert doc["subject"] == "Assunto teste"
             assert doc["to"] == [{"email": "destino@example.com"}]
             assert doc["from"]["email"] == "noreply@spartacus.app.br"
             assert doc["personalization"] == [
@@ -52,6 +54,7 @@ class TestFirestoreMailAdapter:
             FirestoreMailAdapter().send(
                 event_id="signup.email_confirmation",
                 template_id="tmpl-456",
+                subject="Confirme seu e-mail",
                 to="carlos@email.com",
                 data={
                     "name": "Carlos",
