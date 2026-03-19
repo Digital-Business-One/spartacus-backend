@@ -69,7 +69,7 @@ class SignupRequest(BaseModel):
     password: Optional[str] = None
     name: str
     birth_date: str
-    tax_id: str
+    tax_id: Optional[str] = None
     phone: str
     whatsapp: str
     postal_code: str
@@ -112,10 +112,10 @@ class SignupRequest(BaseModel):
 
     @field_validator("tax_id")
     @classmethod
-    def tax_id_valid(cls, v: str) -> str:
-        if not _validate_cpf(v):
+    def tax_id_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _validate_cpf(v):
             raise ValueError("CPF inválido")
-        return re.sub(r"\D", "", v)
+        return re.sub(r"\D", "", v) if v else v
 
     @field_validator("phone", "whatsapp")
     @classmethod
