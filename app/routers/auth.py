@@ -6,6 +6,7 @@ from app.logging.decorator import log
 from app.models.auth import (
     CheckEmailResponse,
     EmailVerifiedResponse,
+    MeResponse,
     ResendVerificationRequest,
     SignupRequest,
     SignupResponse,
@@ -52,6 +53,18 @@ def signup(
     event = AuthService().signup(x_project_id, data, google_uid)
     dispatcher.dispatch(event)
     return SignupResponse(uid=event.payload.uid, status=event.payload.status)
+
+
+@log
+@router.get("/me")
+def me() -> MeResponse:
+    ctx = auth_ctx.get()
+    user_doc = AuthService().get_user_status(ctx.user_id)
+    return MeResponse(
+        uid=ctx.user_id,
+        email=ctx.user_email,
+        approval_status=user_doc,
+    )
 
 
 @log

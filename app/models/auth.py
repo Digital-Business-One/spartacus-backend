@@ -168,3 +168,11 @@ class EmailVerifiedResponse(BaseModel):
 
 class CheckEmailResponse(BaseModel):
     available: bool
+
+
+class MeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    uid: str
+    email: str
+    approval_status: str

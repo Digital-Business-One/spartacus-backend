@@ -244,6 +244,14 @@ class AuthService:
             ),
         )
 
+    @log
+    def get_user_status(self, uid: str) -> str:
+        db = firestore.client()
+        doc = db.collection(self._USERS).document(uid).get()
+        if not doc.exists:
+            return "not_found"
+        return doc.to_dict().get("approvalStatus", "unknown")
+
     def _fetch_class_names(
         self, db, data: SignupRequest
     ) -> dict[str, str]:
