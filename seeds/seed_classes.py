@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Seed classes (turmas) for the ROOT Spartacus project into Firestore.
 
-Idempotent: uses merge=True, so re-running does not duplicate documents.
-iconUrl is left null — upload modality icons to Firebase Storage and update manually.
-Expected Storage paths: modalities/{jiu-jitsu,capoeira,muay-thai,mma,general}.png
+Destructive: deletes ALL existing classes for the project before inserting.
+Data source: docs/images/turmas.jpeg (official schedule poster).
 
 Usage (local dev with emulators running):
-    FIRESTORE_EMULATOR_HOST=localhost:8080 \\
-    FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 \\
-    FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 \\
-    GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais \\
-    ROOT_PROJECT_ID=spartacus-artes-marciais \\
+    FIRESTORE_EMULATOR_HOST=localhost:8080 \
+    FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 \
+    FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 \
+    GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais \
+    ROOT_PROJECT_ID=spartacus-artes-marciais \
+    uv run python seeds/seed_classes.py
+
+Usage (production — requires ADC):
+    GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais \
+    ROOT_PROJECT_ID=spartacus-artes-marciais \
     uv run python seeds/seed_classes.py
 """
 import os
@@ -24,127 +28,81 @@ import firebase_admin
 from firebase_admin import firestore
 
 _CLASSES: list[dict] = [
-    # ─── Kids & Youth ─────────────────────────────────────────────────────────
+    # ─── Muay Thai ────────────────────────────────────────────────────────────
     {
-        "id": "jiu-jitsu-kids",
-        "name": "Jiu-Jitsu Kids",
-        "modality": "Jiu-Jitsu",
-        "weeklySchedule": {
-            "days": ["mon", "wed", "fri"],
-            "startTime": "08:00",
-            "endTime": "09:00",
-        },
-        "teacherName": "Istanrley",
-        "ageRange": {"min": 5, "max": 12},
-    },
-    {
-        "id": "capoeira-kids",
-        "name": "Capoeira Kids",
-        "modality": "Capoeira",
-        "weeklySchedule": {
-            "days": ["tue", "thu"],
-            "startTime": "09:00",
-            "endTime": "10:00",
-        },
-        "teacherName": "Mestre João",
-        "ageRange": {"min": 6, "max": 14},
-    },
-    {
-        "id": "mma-youth",
-        "name": "MMA Youth",
-        "modality": "MMA",
-        "weeklySchedule": {
-            "days": ["mon", "wed", "fri"],
-            "startTime": "14:00",
-            "endTime": "15:00",
-        },
-        "teacherName": None,
-        "ageRange": {"min": 13, "max": 17},
-    },
-    {
-        "id": "kids-youth-general-morning",
-        "name": "Kids & Youth General",
-        "modality": "General",
-        "weeklySchedule": {
-            "days": ["tue", "wed", "thu", "fri"],
-            "startTime": "09:00",
-            "endTime": "10:00",
-        },
-        "teacherName": None,
-        "ageRange": {"min": 5, "max": 17},
-    },
-    {
-        "id": "kids-youth-general-afternoon",
-        "name": "Kids & Youth General",
-        "modality": "General",
-        "weeklySchedule": {
-            "days": ["tue", "wed", "thu", "fri"],
-            "startTime": "16:00",
-            "endTime": "17:00",
-        },
-        "teacherName": None,
-        "ageRange": {"min": 5, "max": 17},
-    },
-    # ─── Adults ───────────────────────────────────────────────────────────────
-    {
-        "id": "jiu-jitsu-adults",
-        "name": "Jiu-Jitsu Adults",
-        "modality": "Jiu-Jitsu",
+        "id": "muay-thai-kids",
+        "name": "Muay Thai Kids e Juvenil",
+        "modality": "Muay Thai",
         "weeklySchedule": {
             "days": ["mon", "wed"],
             "startTime": "16:00",
             "endTime": "17:00",
         },
-        "teacherName": "Istanrley",
-        "ageRange": {"min": 16, "max": None},
+        "teacherName": None,
+        "ageRange": {"min": 5, "max": 17},
+    },
+    # ─── Capoeira ─────────────────────────────────────────────────────────────
+    {
+        "id": "capoeira",
+        "name": "Capoeira — Todas as Idades",
+        "modality": "Capoeira",
+        "weeklySchedule": {
+            "days": ["mon"],
+            "startTime": "17:30",
+            "endTime": "18:30",
+        },
+        "teacherName": None,
+        "ageRange": {"min": 5, "max": None},
+    },
+    # ─── Jiu-Jitsu ────────────────────────────────────────────────────────────
+    {
+        "id": "jiu-jitsu-kids-matutino",
+        "name": "Jiu-Jitsu Juvenil e Kids — Matutino",
+        "modality": "Jiu-Jitsu",
+        "weeklySchedule": {
+            "days": ["tue", "thu"],
+            "startTime": "09:00",
+            "endTime": "10:00",
+        },
+        "teacherName": None,
+        "ageRange": {"min": 5, "max": 17},
     },
     {
-        "id": "muay-thai",
-        "name": "Muay Thai",
-        "modality": "Muay Thai",
+        "id": "jiu-jitsu-kids-vespertino",
+        "name": "Jiu-Jitsu Juvenil e Kids — Vespertino",
+        "modality": "Jiu-Jitsu",
         "weeklySchedule": {
-            "days": ["mon", "wed", "fri"],
-            "startTime": "20:00",
-            "endTime": "21:00",
+            "days": ["tue", "thu"],
+            "startTime": "16:00",
+            "endTime": "17:00",
+        },
+        "teacherName": None,
+        "ageRange": {"min": 5, "max": 17},
+    },
+    {
+        "id": "jiu-jitsu-adultos",
+        "name": "Jiu-Jitsu Adultos",
+        "modality": "Jiu-Jitsu",
+        "weeklySchedule": {
+            "days": ["thu"],
+            "startTime": "19:30",
+            "endTime": "20:30",
         },
         "teacherName": None,
         "ageRange": {"min": 16, "max": None},
     },
+    # ─── MMA ──────────────────────────────────────────────────────────────────
     {
-        "id": "capoeira-adults",
-        "name": "Capoeira",
-        "modality": "Capoeira",
-        "weeklySchedule": {
-            "days": ["mon"],
-            "startTime": "17:00",
-            "endTime": "18:00",
-        },
-        "teacherName": "Mestre João",
-        "ageRange": {"min": 16, "max": None},
-    },
-    {
-        "id": "mma-submission",
-        "name": "MMA / Submission Wrestling",
+        "id": "mma",
+        "name": "MMA — Cardio e Isometria",
         "modality": "MMA",
         "weeklySchedule": {
             "days": ["fri"],
             "startTime": "19:00",
-            "endTime": "20:00",
+            "endTime": "20:30",
         },
         "teacherName": None,
         "ageRange": {"min": 16, "max": None},
-    },
-    {
-        "id": "adults-general",
-        "name": "Adults General",
-        "modality": "General",
-        "weeklySchedule": {
-            "days": ["fri"],
-            "startTime": "19:00",
-            "endTime": "20:00",
-        },
-        "teacherName": None,
-        "ageRange": {"min": 18, "max": None},
     },
 ]
 
@@ -157,30 +115,33 @@ def run() -> None:
     now = datetime.now(timezone.utc).isoformat()
     collection = db.collection("classes")
 
-    print(f"Seeding classes for project '{project_id}'...")
+    # ── Delete existing classes for this project ──────────────────────────────
+    existing = collection.where("projectId", "==", project_id).stream()
+    deleted = 0
+    for doc in existing:
+        doc.reference.delete()
+        deleted += 1
+    print(f"Deleted {deleted} existing classes for project '{project_id}'.")
+
+    # ── Insert new classes ────────────────────────────────────────────────────
+    print(f"\nSeeding {len(_CLASSES)} classes...")
     for cls in _CLASSES:
         doc_id = f"{project_id}_{cls['id']}"
-        collection.document(doc_id).set(
-            {
-                "projectId": project_id,
-                "name": cls["name"],
-                "modality": cls["modality"],
-                "weeklySchedule": cls["weeklySchedule"],
-                "teacherId": None,
-                "teacherName": cls["teacherName"],
-                "ageRange": cls["ageRange"],
-                "iconUrl": None,
-                "active": True,
-                "createdAt": now,
-            },
-            merge=True,
-        )
+        collection.document(doc_id).set({
+            "projectId": project_id,
+            "name": cls["name"],
+            "modality": cls["modality"],
+            "weeklySchedule": cls["weeklySchedule"],
+            "teacherId": None,
+            "teacherName": cls["teacherName"],
+            "ageRange": cls["ageRange"],
+            "iconUrl": None,
+            "active": True,
+            "createdAt": now,
+        })
         print(f"  ✓ {doc_id}")
 
     print(f"\n{len(_CLASSES)} classes seeded.")
-    print("Reminder: iconUrl is null — upload icons to Storage when ready.")
-    print("  Paths: modalities/<slug>.png")
-    print("  Slugs: jiu-jitsu, capoeira, muay-thai, mma, general")
 
 
 if __name__ == "__main__":
