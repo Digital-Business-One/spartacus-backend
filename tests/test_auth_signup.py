@@ -19,7 +19,6 @@ _BASE_PAYLOAD = {
     "password": "senha1234",
     "name": "João Silva",
     "birthDate": "01/01/1990",
-    "taxId": "111.444.777-35",
     "phone": "65999990000",
     "whatsapp": "65999990000",
     "postalCode": "78350-000",
@@ -38,6 +37,7 @@ _BASE_PAYLOAD = {
 def _mock_db(
     email_exists: bool = False,
     cpf_exists: bool = False,
+    person_exists: bool = False,
     user_doc=None,
 ):
     """Build a Firestore client mock for duplicate checks and writes."""
@@ -53,7 +53,25 @@ def _mock_db(
                 results = [MagicMock()]
             if field == "taxId" and cpf_exists:
                 results = [MagicMock()]
-            mock_query.limit.return_value.stream.return_value = iter(results)
+            if field == "name" and person_exists:
+                # Chained where: name → birthDate → phone
+                chain = MagicMock()
+                chain2 = MagicMock()
+                chain2.limit.return_value.stream.return_value = (
+                    iter([MagicMock()])
+                )
+                chain.where.return_value = chain2
+                mock_query.where.return_value = chain
+                return mock_query
+            mock_query.limit.return_value.stream.return_value = (
+                iter(results)
+            )
+            # Default chained where returns empty
+            chain = MagicMock()
+            chain2 = MagicMock()
+            chain2.limit.return_value.stream.return_value = iter([])
+            chain.where.return_value = chain2
+            mock_query.where.return_value = chain
             return mock_query
 
         mock_col.where.side_effect = where_side_effect
@@ -148,17 +166,34 @@ class TestSignupEmail:
         assert "Email" in response.json()["detail"]
 
     def test_cpf_duplicado_retorna_409(self):
+        payload = {**_BASE_PAYLOAD, "taxId": "111.444.777-35"}
         with (
             patch("app.services.auth_service.firestore") as mock_fs,
         ):
             mock_fs.client.return_value = _mock_db(cpf_exists=True)
             response = client.post(
                 "/auth/signup",
-                json=_BASE_PAYLOAD,
+                json=payload,
                 headers={"X-Project-Id": _PROJECT_ID},
             )
         assert response.status_code == 409
         assert "CPF" in response.json()["detail"]
+
+    def test_pessoa_duplicada_retorna_409(self):
+        """Same name + birthDate + phone → 409."""
+        with (
+            patch("app.services.auth_service.firestore") as mock_fs,
+        ):
+            mock_fs.client.return_value = _mock_db(
+                person_exists=True
+            )
+            response = client.post(
+                "/auth/signup",
+                json={**_BASE_PAYLOAD, "email": "outro@example.com"},
+                headers={"X-Project-Id": _PROJECT_ID},
+            )
+        assert response.status_code == 409
+        assert "conta cadastrada" in response.json()["detail"]
 
     def test_sem_password_retorna_422(self):
         payload = {**_BASE_PAYLOAD, "password": None}

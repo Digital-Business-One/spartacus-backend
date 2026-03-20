@@ -63,7 +63,7 @@ class AuthService:
         google_uid: str | None = None,
     ) -> DomainEvent:
         db = firestore.client()
-        self._assert_no_duplicate(db, data.email, data.tax_id)
+        self._assert_no_duplicate(db, data)
 
         if data.auth_method == "email":
             try:
@@ -262,15 +262,37 @@ class AuthService:
             if doc.exists
         }
 
-    def _assert_no_duplicate(self, db, email: str, tax_id: str) -> None:
+    def _assert_no_duplicate(
+        self, db, data: SignupRequest
+    ) -> None:
         users = db.collection(self._USERS)
-        if list(users.where("email", "==", email).limit(1).stream()):
+        if list(
+            users.where("email", "==", data.email)
+            .limit(1)
+            .stream()
+        ):
             raise HTTPException(
                 status_code=409, detail="Email já cadastrado"
             )
-        if list(users.where("taxId", "==", tax_id).limit(1).stream()):
+        if data.tax_id and list(
+            users.where("taxId", "==", data.tax_id)
+            .limit(1)
+            .stream()
+        ):
             raise HTTPException(
                 status_code=409, detail="CPF já cadastrado"
+            )
+        matches = (
+            users.where("name", "==", data.name)
+            .where("birthDate", "==", data.birth_date)
+            .where("phone", "==", data.phone)
+            .limit(1)
+            .stream()
+        )
+        if list(matches):
+            raise HTTPException(
+                status_code=409,
+                detail="Já existe uma conta cadastrada para este usuário",
             )
 
     def _create_membership(
