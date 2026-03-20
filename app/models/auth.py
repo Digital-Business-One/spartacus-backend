@@ -2,7 +2,7 @@ import re
 from datetime import date, datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 VALID_SIGNUP_ROLES: frozenset[str] = frozenset(
@@ -37,8 +37,8 @@ class DependentIn(BaseModel):
     id: str
     name: str
     birth_date: str
-    tax_id: Optional[str] = None
-    class_ids: list[str] = []
+    tax_id: Optional[str] = Field(default=None)
+    class_ids: list[str] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -66,22 +66,22 @@ class SignupRequest(BaseModel):
 
     auth_method: Literal["email", "google"]
     email: str
-    password: Optional[str] = None
+    password: Optional[str] = Field(default=None)
     name: str
     birth_date: str
-    tax_id: Optional[str] = None
+    tax_id: Optional[str] = Field(default=None)
     phone: str
     whatsapp: str
     postal_code: str
     street: str
     number: str
-    complement: Optional[str] = None
+    complement: Optional[str] = Field(default=None)
     neighborhood: str
     city: str
     state: str
     roles: list[str]
-    dependents: list[DependentIn] = []
-    class_ids: list[str] = []
+    dependents: list[DependentIn] = Field(default_factory=list)
+    class_ids: list[str] = Field(default_factory=list)
 
     @field_validator("email")
     @classmethod
