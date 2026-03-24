@@ -72,18 +72,6 @@ def me() -> MeResponse:
 
 
 @log
-@router.get("/me")
-def me() -> MeResponse:
-    ctx = auth_ctx.get()
-    user_doc = AuthService().get_user_status(ctx.user_id)
-    return MeResponse(
-        uid=ctx.user_id,
-        email=ctx.user_email,
-        approval_status=user_doc,
-    )
-
-
-@log
 @router.post("/email-verified")
 def email_verified(
     x_project_id: str = Header(...),
