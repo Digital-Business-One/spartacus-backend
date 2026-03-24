@@ -52,7 +52,11 @@ def signup(
 
     event = AuthService().signup(x_project_id, data, google_uid)
     dispatcher.dispatch(event)
-    return SignupResponse(uid=event.payload.uid, status=event.payload.status)
+    return SignupResponse(
+        uid=event.payload.uid,
+        status=event.payload.status,
+        email=data.email if data.auth_method == "email" else None,
+    )
 
 
 @log

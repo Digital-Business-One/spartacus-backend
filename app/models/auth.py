@@ -156,6 +156,7 @@ class SignupRequest(BaseModel):
 class SignupResponse(BaseModel):
     uid: str
     status: str
+    email: Optional[str] = None
 
 
 class ResendVerificationRequest(BaseModel):
