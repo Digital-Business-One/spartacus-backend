@@ -98,6 +98,7 @@ class AuthService:
                 "name": data.name,
                 "email": data.email,
                 "birthDate": data.birth_date,
+                "gender": data.gender,
                 "taxId": data.tax_id,
                 "phone": data.phone,
                 "whatsapp": data.whatsapp,
@@ -125,6 +126,7 @@ class AuthService:
                 {
                     "name": dep.name,
                     "birthDate": dep.birth_date,
+                    "gender": dep.gender,
                     "taxId": dep.tax_id,
                     "guardianUid": uid,
                     "approvalStatus": "pending_approval",

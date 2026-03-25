@@ -37,6 +37,7 @@ class DependentIn(BaseModel):
     id: str
     name: str
     birth_date: str
+    gender: Literal["male", "female"]
     tax_id: Optional[str] = Field(default=None)
     class_ids: list[str] = Field(default_factory=list)
 
@@ -69,6 +70,7 @@ class SignupRequest(BaseModel):
     password: Optional[str] = Field(default=None)
     name: str
     birth_date: str
+    gender: Literal["male", "female"]
     tax_id: Optional[str] = Field(default=None)
     phone: str
     whatsapp: str

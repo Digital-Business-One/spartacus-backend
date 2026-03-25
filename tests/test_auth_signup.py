@@ -19,6 +19,7 @@ _BASE_PAYLOAD = {
     "password": "senha1234",
     "name": "João Silva",
     "birthDate": "01/01/1990",
+    "gender": "male",
     "phone": "65999990000",
     "whatsapp": "65999990000",
     "postalCode": "78350-000",
@@ -240,6 +241,7 @@ class TestSignupEmail:
                     "id": "dep-1",
                     "name": "Maria Silva",
                     "birthDate": "10/05/2018",
+                    "gender": "female",
                     "taxId": None,
                     "classIds": [],
                 }
@@ -343,6 +345,7 @@ class TestSignupEmail:
                     "id": "dep-1",
                     "name": "Pedro Silva",
                     "birthDate": "15/06/2014",
+                    "gender": "male",
                     "taxId": None,
                     "classIds": ["class-cap"],
                 }
