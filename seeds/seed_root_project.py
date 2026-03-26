@@ -12,7 +12,7 @@ Usage (local dev with emulators running):
     FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 \
     GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais \
     ROOT_PROJECT_ID=spartacus-artes-marciais \
-    uv run python seeds/seed.py
+    uv run python seeds/seed_root_project.py
 """
 import os
 from datetime import datetime, timezone
