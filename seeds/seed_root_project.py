@@ -92,8 +92,9 @@ def run() -> None:
         bucket = storage.bucket(bucket_name)
         blob = bucket.blob(object_path)
         blob.upload_from_filename(str(logo_path), content_type="image/jpeg")
-        blob.make_public()
-        logo_url = blob.public_url
+        # Public access is handled by IAM (uniform bucket-level access),
+        # not legacy ACL — so no blob.make_public() needed.
+        logo_url = f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/{object_path.replace('/', '%2F')}?alt=media"
 
     # ── Upsert ROOT project document ─────────────────────────────────────────
     db = firestore.client()
