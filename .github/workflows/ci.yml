@@ -24,6 +24,7 @@ jobs:
   # ─── Lint & Testes unitários ────────────────────────────────────────────────
   test:
     name: Lint & Unit Tests
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +49,7 @@ jobs:
   test-integration:
     name: Integration Tests
     needs: test
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
