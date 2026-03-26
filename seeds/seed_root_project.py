@@ -70,7 +70,7 @@ def run() -> None:
     logo_path = _ASSETS_DIR / "logo.jpg"
     bucket_name = os.getenv(
         "FIREBASE_STORAGE_BUCKET",
-        f"{gcp_project}.appspot.com" if storage_emulator else f"{gcp_project}.firebasestorage.app",
+        f"{gcp_project}.appspot.com",
     )
     object_path = f"projects/{project_id}/logo.jpg"
 
