@@ -257,6 +257,13 @@ class AuthService:
     def _fetch_class_names(
         self, db, data: SignupRequest
     ) -> dict[str, str]:
+        """Resolve class IDs to names for email templates.
+
+        Class IDs are composite: ``{projectId}_{slug}`` (e.g.
+        ``spartacus-artes-marciais_muay-thai-kids``).  The frontend
+        receives these from ``GET /projects/{id}/classes`` and sends
+        them back as-is during signup.
+        """
         all_ids = set(data.class_ids)
         for dep in data.dependents:
             all_ids.update(dep.class_ids)

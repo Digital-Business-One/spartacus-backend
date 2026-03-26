@@ -25,7 +25,7 @@ def public(func):
 
 def register_public_routes(routes) -> None:
     """
-    Scan app routes and register path patterns for @public-marked handlers.
+    Scan app routes and register (method, path) patterns for @public handlers.
     Converts path templates (e.g. /{project_id}/classes) to regex patterns
     so parameterized routes are correctly matched at request time.
     Must be called once after all routes are registered in main.py.
@@ -34,14 +34,20 @@ def register_public_routes(routes) -> None:
         endpoint = getattr(route, "endpoint", None)
         if endpoint is not None and getattr(endpoint, "__is_public__", False):
             path = getattr(route, "path", "")
+            methods = getattr(route, "methods", set())
             if path:
                 pattern = re.sub(r"\{[^}]+\}", "[^/]+", path)
-                _PUBLIC_PATTERNS.append(re.compile(f"^{pattern}$"))
+                compiled = re.compile(f"^{pattern}$")
+                for method in methods:
+                    _PUBLIC_PATTERNS.append((method.upper(), compiled))
 
 
 def is_public(request: Request) -> bool:
     path = request.url.path
-    return any(p.match(path) for p in _PUBLIC_PATTERNS)
+    method = request.method.upper()
+    return any(
+        m == method and p.match(path) for m, p in _PUBLIC_PATTERNS
+    )
 
 
 def require_roles(*roles: str):
