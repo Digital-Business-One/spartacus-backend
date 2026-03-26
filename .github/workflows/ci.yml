@@ -15,6 +15,7 @@ on:
         options:
           - root_project
           - classes
+          - admin_account
           - all
 
 env:
@@ -156,3 +157,10 @@ jobs:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
           ROOT_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
         run: uv run python seeds/seed_classes.py
+
+      - name: Seed admin account
+        if: inputs.seed == 'admin_account' || inputs.seed == 'all'
+        env:
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
+          ROOT_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: uv run python seeds/seed_admin_account.py

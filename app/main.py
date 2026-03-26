@@ -8,7 +8,7 @@ from firebase_admin import initialize_app
 from app.logging.config import configure_logging
 from app.logging.middleware import LoggingMiddleware
 from app.models.project import MyProjectOut
-from app.routers import auth, classes, internal, members, projects
+from app.routers import accounts, auth, classes, internal, members, projects
 from app.security.context import auth_ctx
 from app.security.decorator import public, register_public_routes
 from app.security.middleware import AuthMiddleware
@@ -38,6 +38,7 @@ app.add_middleware(
 )
 
 app.include_router(internal.router)
+app.include_router(accounts.router)
 app.include_router(projects.router)
 app.include_router(members.router)
 app.include_router(classes.router)

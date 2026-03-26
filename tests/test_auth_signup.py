@@ -144,7 +144,7 @@ class TestSignupEmail:
         assert response.status_code == 201
         body = response.json()
         assert body["uid"] == "uid-123"
-        assert body["status"] == "pending_email"
+        assert body["status"] == "waiting_email_confirmation"
         mock_disp.dispatch.assert_called_once()
         event = mock_disp.dispatch.call_args[0][0]
         assert event.id == "signup.email_confirmation"
@@ -261,7 +261,7 @@ class TestSignupEmail:
                 headers={"X-Project-Id": _PROJECT_ID},
             )
         assert response.status_code == 201
-        assert response.json()["status"] == "pending_email"
+        assert response.json()["status"] == "waiting_email_confirmation"
         event = mock_disp.dispatch.call_args[0][0]
         assert event.payload.show_dependents is True
         assert len(event.payload.dependents) == 1
@@ -303,7 +303,7 @@ class TestSignupEmail:
         assert response.status_code == 201
         body = response.json()
         assert body["uid"] == "existing-uid-789"
-        assert body["status"] == "pending_email"
+        assert body["status"] == "waiting_email_confirmation"
         mock_auth.update_user.assert_called_once_with(
             "existing-uid-789",
             password="senha1234",
@@ -470,7 +470,7 @@ class TestEmailVerified:
         mock_user_doc = MagicMock()
         mock_user_doc.exists = True
         mock_user_doc.to_dict.return_value = {
-            "approvalStatus": "pending_email",
+            "approvalStatus": "waiting_email_confirmation",
             "name": "João Silva",
         }
 
@@ -535,7 +535,7 @@ class TestResendVerification:
     def test_reenvio_bem_sucedido_retorna_200(self):
         mock_user_doc = MagicMock()
         mock_user_doc.to_dict.return_value = {
-            "approvalStatus": "pending_email",
+            "approvalStatus": "waiting_email_confirmation",
             "name": "João Silva",
         }
 

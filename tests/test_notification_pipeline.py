@@ -39,7 +39,7 @@ class TestSignupEmailConfirmation:
             id="signup.email_confirmation",
             payload=SignupEmailPayload(
                 uid="uid-123",
-                status="pending_email",
+                status="waiting_email_confirmation",
                 to="carlos@email.com",
                 name="Carlos Eduardo da Silva",
                 email="carlos@email.com",
@@ -82,7 +82,7 @@ class TestSignupEmailConfirmation:
             id="signup.email_confirmation",
             payload=SignupEmailPayload(
                 uid="uid-456",
-                status="pending_email",
+                status="waiting_email_confirmation",
                 to="maria@email.com",
                 name="Maria Aparecida",
                 email="maria@email.com",
