@@ -7,10 +7,12 @@ from firebase_admin import initialize_app
 
 from app.logging.config import configure_logging
 from app.logging.middleware import LoggingMiddleware
+from app.models.project import MyProjectOut
 from app.routers import auth, classes, internal, members, projects
 from app.security.context import auth_ctx
 from app.security.decorator import public, register_public_routes
 from app.security.middleware import AuthMiddleware
+from app.services.project_service import ProjectService
 
 load_dotenv()
 configure_logging()
@@ -23,6 +25,10 @@ _cors_raw = os.getenv("CORS_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 _is_dev = os.getenv("APP_ENV") == "development"
 
+# Starlette applies middlewares in REVERSE add order (last added = outermost).
+# Order of execution: CORS → Logging → Auth → route handler.
+app.add_middleware(AuthMiddleware)
+app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins if _cors_origins else (["*"] if _is_dev else []),
@@ -30,11 +36,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Starlette applies middlewares in reverse add order.
-# AuthMiddleware executes first: sets auth_ctx and propagates user_id to request_ctx.
-app.add_middleware(LoggingMiddleware)
-app.add_middleware(AuthMiddleware)
 
 app.include_router(internal.router)
 app.include_router(projects.router)
@@ -62,6 +63,13 @@ def me():
     """Returns the authenticated user's data."""
     ctx = auth_ctx.get()
     return {"uid": ctx.user_id, "email": ctx.user_email, "roles": ctx.roles}
+
+
+@app.get("/me/projects")
+def my_projects() -> list[MyProjectOut]:
+    """Returns all projects the authenticated user belongs to."""
+    ctx = auth_ctx.get()
+    return ProjectService().list_by_user(ctx.user_id)
 
 
 # Resolve @public paths after all routes are registered.
