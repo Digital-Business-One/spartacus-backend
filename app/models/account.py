@@ -21,6 +21,8 @@ class AccountOut(BaseModel):
     created_at: Optional[str] = None
     is_dependent: bool = False
     guardian_uid: Optional[str] = None
+    class_ids: list[str] = []
+    class_names: list[str] = []
     available_actions: list[AccountAction] = []
 
 

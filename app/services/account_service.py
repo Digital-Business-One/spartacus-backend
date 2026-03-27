@@ -28,9 +28,12 @@ class AccountService:
         user = user_doc.to_dict()
         roles = self._get_roles(db, project_id, uid)
         status = user.get("approvalStatus", "")
+        class_names = self._fetch_class_names(db, user.get("classIds", []))
 
         actions = get_available_actions(status, roles, executed_by_filter="team")
-        return self._build_account_out(uid, user, roles, status, actions)
+        return self._build_account_out(
+            uid, user, roles, status, actions, class_names
+        )
 
     @log
     def list_accounts(
@@ -74,12 +77,20 @@ class AccountService:
         ]
         user_docs = db.get_all(refs)
 
-        results: list[AccountOut] = []
+        # Collect all class IDs for batch fetch
+        all_class_ids: set[str] = set()
+        user_data_list: list[tuple[str, dict]] = []
         for doc in user_docs:
             if not doc.exists:
                 continue
             user = doc.to_dict()
-            uid = doc.id
+            all_class_ids.update(user.get("classIds", []))
+            user_data_list.append((doc.id, user))
+
+        class_names = self._fetch_class_names(db, list(all_class_ids))
+
+        results: list[AccountOut] = []
+        for uid, user in user_data_list:
             roles = uid_roles.get(uid, [])
             status = user.get("approvalStatus", "")
 
@@ -97,7 +108,9 @@ class AccountService:
                 status, roles, executed_by_filter="team"
             )
             results.append(
-                self._build_account_out(uid, user, roles, status, actions)
+                self._build_account_out(
+                    uid, user, roles, status, actions, class_names
+                )
             )
 
         return results
@@ -155,6 +168,22 @@ class AccountService:
         )
 
     # ── Private helpers ────────────────────────────────────────────────────
+
+    def _fetch_class_names(
+        self, db, class_ids: list[str]
+    ) -> dict[str, str]:
+        if not class_ids:
+            return {}
+        refs = [
+            db.collection("classes").document(cid)
+            for cid in class_ids
+        ]
+        docs = db.get_all(refs)
+        return {
+            doc.id: doc.to_dict().get("name", doc.id)
+            for doc in docs
+            if doc.exists
+        }
 
     def _get_roles(
         self, db, project_id: str, uid: str
@@ -223,7 +252,13 @@ class AccountService:
         roles: list[str],
         status: str,
         transitions: list,
+        class_names_map: dict[str, str] | None = None,
     ) -> AccountOut:
+        class_ids = user.get("classIds", [])
+        names_map = class_names_map or {}
+        class_names = [
+            names_map.get(cid, cid) for cid in class_ids
+        ]
         return AccountOut(
             uid=uid,
             name=user.get("name", ""),
@@ -236,6 +271,8 @@ class AccountService:
             created_at=user.get("createdAt"),
             is_dependent=user.get("isDependent", False),
             guardian_uid=user.get("guardianUid"),
+            class_ids=class_ids,
+            class_names=class_names,
             available_actions=[
                 AccountAction(
                     action=t.action,

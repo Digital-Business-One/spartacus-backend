@@ -93,7 +93,31 @@ def _random_birth(roles):
     return f"{day:02d}/{month:02d}/{year}"
 
 
-def _gen_accounts(count_per_state=5):
+_CLASS_ROLES = {"student", "teacher", "instructor"}
+
+# Class IDs matching seed_classes.py composite format
+_CLASS_IDS = [
+    "muay-thai-kids",
+    "capoeira",
+    "jiu-jitsu-kids-matutino",
+    "jiu-jitsu-kids-vespertino",
+    "jiu-jitsu-adultos",
+    "mma",
+]
+
+
+def _random_class_ids(
+    roles: list[str], project_id: str
+) -> list[str]:
+    """Assign 1-3 random classes for student/teacher/instructor."""
+    if not any(r in _CLASS_ROLES for r in roles):
+        return []
+    count = random.randint(1, 3)
+    slugs = random.sample(_CLASS_IDS, min(count, len(_CLASS_IDS)))
+    return [f"{project_id}_{s}" for s in slugs]
+
+
+def _gen_accounts(count_per_state=5, project_id="spartacus-artes-marciais"):
     """Generate account specs: one per (state, role_set) combination."""
     accounts = []
     idx = 0
@@ -117,6 +141,7 @@ def _gen_accounts(count_per_state=5):
                 "status": state,
                 "birthDate": _random_birth(role_set),
                 "phone": _random_phone(),
+                "classIds": _random_class_ids(role_set, project_id),
             })
             idx += 1
     return accounts
@@ -128,7 +153,7 @@ def run() -> None:
     now = datetime.now(timezone.utc).isoformat()
     db = firestore.client()
 
-    accounts = _gen_accounts(count_per_state=5)
+    accounts = _gen_accounts(count_per_state=5, project_id=project_id)
     print(f"Generating {len(accounts)} test accounts...\n")
 
     # Stats
@@ -146,24 +171,33 @@ def run() -> None:
         for r in roles:
             role_count[r] = role_count.get(r, 0) + 1
 
-        # Create Firebase Auth user
+        # Create or update Firebase Auth user (idempotent)
+        email_verified = status != "waiting_email_confirmation"
         try:
             user_record = auth.get_user_by_email(email)
             uid = user_record.uid
+            auth.update_user(
+                uid,
+                password=password,
+                email_verified=email_verified,
+                display_name=acc["name"],
+            )
         except auth.UserNotFoundError:
             user_record = auth.create_user(
                 email=email,
                 password=password,
-                email_verified=status != "waiting_email_confirmation",
+                email_verified=email_verified,
                 display_name=acc["name"],
             )
             uid = user_record.uid
 
-        # Set claims if approved or active membership needed
+        # Set or clear claims based on status
         if status == "approved":
             auth.set_custom_user_claims(
                 uid, {"projects": {project_id: roles}}
             )
+        else:
+            auth.set_custom_user_claims(uid, {})
 
         # Firestore user doc
         db.collection("users").document(uid).set(
@@ -177,7 +211,7 @@ def run() -> None:
                 "address": _ADDRESS,
                 "approvalStatus": status,
                 "isDependent": False,
-                "classIds": [],
+                "classIds": acc.get("classIds", []),
                 "createdAt": now,
             },
             merge=True,
