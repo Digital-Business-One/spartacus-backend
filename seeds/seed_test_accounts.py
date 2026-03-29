@@ -43,7 +43,6 @@ _LAST_NAMES = [
 ]
 
 _STATES = [
-    "waiting_email_confirmation",
     "pending_approval",
     "waiting_medical_history",
     "pending_medical_history_approval",
@@ -172,7 +171,7 @@ def run() -> None:
             role_count[r] = role_count.get(r, 0) + 1
 
         # Create or update Firebase Auth user (idempotent)
-        email_verified = status != "waiting_email_confirmation"
+        email_verified = True
         try:
             user_record = auth.get_user_by_email(email)
             uid = user_record.uid
@@ -210,6 +209,7 @@ def run() -> None:
                 "whatsapp": acc["phone"],
                 "address": _ADDRESS,
                 "approvalStatus": status,
+                "emailVerified": True,
                 "isDependent": False,
                 "classIds": acc.get("classIds", []),
                 "createdAt": now,

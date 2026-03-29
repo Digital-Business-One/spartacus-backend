@@ -1,0 +1,171 @@
+<!--
+  Template: signup-received
+  Event ID: signup.account_received
+  Rules.py key: TBD_SIGNUP_RECEIVED
+
+  Variáveis de personalização (payload):
+    - name  (string) — nome do usuário
+-->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cadastro recebido — Spartacus</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #0B0D12;
+      font-family: 'Inter', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+      color: #E5E5E5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+    .header {
+      text-align: center;
+      padding-bottom: 32px;
+      border-bottom: 1px solid #2A2D38;
+    }
+    .logo {
+      font-family: 'Oswald', 'Bebas Neue', sans-serif;
+      font-size: 28px;
+      font-weight: 700;
+      color: #C6A34E;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+    .logo-sub {
+      font-size: 11px;
+      color: #A0A8B4;
+      letter-spacing: 2px;
+      margin-top: 4px;
+    }
+    .content {
+      padding: 32px 0;
+    }
+    h1 {
+      font-family: 'Oswald', sans-serif;
+      font-size: 22px;
+      font-weight: 600;
+      color: #C6A34E;
+      margin: 0 0 16px;
+    }
+    p {
+      font-size: 15px;
+      line-height: 1.7;
+      color: #E0E0E0;
+      margin: 8px 0;
+    }
+    .highlight {
+      color: #E5E5E5;
+      font-weight: 600;
+    }
+    .success-badge {
+      text-align: center;
+      padding: 20px 0;
+    }
+    .badge {
+      display: inline-block;
+      padding: 10px 24px;
+      background-color: #2A2D38;
+      border: 1px solid #C6A34E;
+      border-radius: 6px;
+      color: #C6A34E;
+      font-family: 'Oswald', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .info-card {
+      background-color: #2A2D38;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 24px 0;
+      border-left: 3px solid #C6A34E;
+    }
+    .info-card p {
+      font-size: 14px;
+      margin: 6px 0;
+    }
+    .info-card .step-number {
+      color: #C6A34E;
+      font-weight: 700;
+    }
+    .note {
+      font-size: 13px;
+      color: #A0A8B4;
+      font-style: italic;
+      margin-top: 24px;
+    }
+    .footer {
+      text-align: center;
+      padding-top: 24px;
+      border-top: 1px solid #2A2D38;
+    }
+    .footer p {
+      font-size: 12px;
+      color: #777;
+      margin: 4px 0;
+    }
+    .footer .org {
+      color: #C6A34E;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+
+    <!-- HEADER -->
+    <div class="header">
+      <img src="https://spartacus.app.br/images/logo.png" alt="Spartacus" width="80" height="80" style="display:block;margin:0 auto 12px;" />
+      <div class="logo">SPARTACUS</div>
+      <div class="logo-sub">ARTES MARCIAIS</div>
+    </div>
+
+    <!-- CONTENT -->
+    <div class="content">
+      <h1>Cadastro recebido</h1>
+
+      <p>Olá, <span class="highlight">{{name}}</span>!</p>
+
+      <div class="success-badge">
+        <span class="badge">E-mail confirmado com sucesso</span>
+      </div>
+
+      <p>
+        Seus dados foram recebidos pela equipe do Projeto Spartacus
+        e estão em análise. Você receberá uma confirmação por
+        <span class="highlight">e-mail</span> assim que seu cadastro
+        for aprovado.
+      </p>
+
+      <div class="info-card">
+        <p><span class="step-number">1.</span> Abra o aplicativo Spartacus</p>
+        <p><span class="step-number">2.</span> Toque no seu perfil</p>
+        <p><span class="step-number">3.</span> Ative "Permitir notificações"</p>
+      </div>
+
+      <p class="note">
+        Para não perder nenhuma atualização, ative as notificações
+        no aplicativo.
+      </p>
+
+      <p>Obrigado por fazer parte do Spartacus!</p>
+    </div>
+
+    <!-- FOOTER -->
+    <div class="footer">
+      <p class="org">Projeto Spartacus Artes Marciais</p>
+      <p>Brasnorte — MT</p>
+    </div>
+
+  </div>
+</body>
+</html>

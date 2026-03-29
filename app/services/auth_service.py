@@ -6,11 +6,10 @@ from firebase_admin import auth, firestore
 from app.logging.decorator import log
 from app.models.auth import ResendVerificationRequest, SignupRequest
 from app.notifications.models import (
-    AccountReceivedPayload,
+    AccountNotificationPayload,
     DomainEvent,
     ResendVerificationPayload,
     SignupEmailPayload,
-    SignupGooglePayload,
 )
 
 _ROLES_PT = {
@@ -86,10 +85,10 @@ class AuthService:
                     display_name=data.name,
                 )
                 uid = existing.uid
-            approval_status = "waiting_email_confirmation"
+            email_verified = False
         else:
             uid = google_uid
-            approval_status = "pending_approval"
+            email_verified = True  # Google always verifies email
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -111,7 +110,8 @@ class AuthService:
                     "city": data.city,
                     "state": data.state,
                 },
-                "approvalStatus": approval_status,
+                "approvalStatus": "pending_approval",
+                "emailVerified": email_verified,
                 "isDependent": False,
                 "classIds": data.class_ids,
                 "createdAt": now,
@@ -138,59 +138,29 @@ class AuthService:
             )
             self._create_membership(db, project_id, dep_uid, ["student"], now)
 
+        # Build signup details (shared by email and Google paths)
+        details = self._build_signup_details(db, data)
+
+        link = ""
+        event_id = "signup.account_created"
         if data.auth_method == "email":
             link = auth.generate_email_verification_link(data.email)
-            class_map = self._fetch_class_names(db, data)
+            event_id = "signup.email_confirmation"
 
-            show_classes = bool(data.class_ids) and any(
-                r in data.roles for r in ("student", "teacher", "instructor")
-            )
-            show_dependents = "guardian" in data.roles and bool(data.dependents)
-
-            classes = (
-                [{"name": class_map.get(cid, cid)} for cid in data.class_ids]
-                if show_classes
-                else []
-            )
-
-            dependents_data = []
-            if show_dependents:
-                for dep in data.dependents:
-                    dep_classes = ", ".join(
-                        class_map.get(cid, cid) for cid in dep.class_ids
-                    )
-                    dependents_data.append(
-                        {
-                            "name": dep.name,
-                            "age": _calculate_age(dep.birth_date),
-                            "classes": dep_classes,
-                        }
-                    )
-
-            return DomainEvent(
-                id="signup.email_confirmation",
-                payload=SignupEmailPayload(
-                    uid=uid,
-                    status=approval_status,
-                    to=data.email,
-                    name=data.name,
-                    email=data.email,
-                    phone=data.phone,
-                    roles_label=_roles_label(data.roles),
-                    link=link,
-                    show_classes=show_classes,
-                    classes=classes,
-                    show_dependents=show_dependents,
-                    dependents=dependents_data,
-                ),
-            )
-        else:
-            return DomainEvent(
-                id="signup.google_completed",
-                payload=SignupGooglePayload(
-                    uid=uid, status=approval_status
-                ),
-            )
+        return DomainEvent(
+            id=event_id,
+            payload=SignupEmailPayload(
+                uid=uid,
+                status="pending_approval",
+                to=data.email,
+                name=data.name,
+                email=data.email,
+                phone=data.phone,
+                roles_label=_roles_label(data.roles),
+                link=link,
+                **details,
+            ),
+        )
 
     @log
     def confirm_email_verified(
@@ -210,15 +180,20 @@ class AuthService:
                 status_code=404, detail="Usuário não encontrado"
             )
         user_data = user_doc.to_dict()
-        current_status = user_data.get("approvalStatus")
-        if current_status != "waiting_email_confirmation":
-            return None
-        user_ref.update({"approvalStatus": "pending_approval"})
+        # Only update the emailVerified field — status is NOT affected
+        if user_data.get("emailVerified") is True:
+            return None  # Already marked
+        user_ref.update({"emailVerified": True})
         return DomainEvent(
-            id="signup.account_received",
-            payload=AccountReceivedPayload(
+            id="signup.email_verified",
+            payload=AccountNotificationPayload(
                 to=email,
                 name=user_data.get("name", ""),
+                title="E-mail confirmado",
+                message=(
+                    "Seu e-mail foi verificado com sucesso. "
+                    "Seu cadastro está em análise pela equipe."
+                ),
             ),
         )
 
@@ -234,8 +209,8 @@ class AuthService:
         if not results:
             return None
         user_data = results[0].to_dict()
-        if user_data.get("approvalStatus") != "waiting_email_confirmation":
-            return None
+        if user_data.get("emailVerified") is True:
+            return None  # Already verified
         link = auth.generate_email_verification_link(data.email)
         return DomainEvent(
             id="signup.resend_verification",
@@ -253,6 +228,43 @@ class AuthService:
         if not doc.exists:
             return "not_found"
         return doc.to_dict().get("approvalStatus", "unknown")
+
+    def _build_signup_details(
+        self, db, data: SignupRequest
+    ) -> dict:
+        """Build shared signup details for email templates."""
+        class_map = self._fetch_class_names(db, data)
+        show_classes = bool(data.class_ids) and any(
+            r in data.roles
+            for r in ("student", "teacher", "instructor")
+        )
+        show_dependents = (
+            "guardian" in data.roles and bool(data.dependents)
+        )
+        classes = (
+            [{"name": class_map.get(cid, cid)} for cid in data.class_ids]
+            if show_classes
+            else []
+        )
+        dependents_data: list[dict] = []
+        if show_dependents:
+            for dep in data.dependents:
+                dep_classes = ", ".join(
+                    class_map.get(cid, cid) for cid in dep.class_ids
+                )
+                dependents_data.append(
+                    {
+                        "name": dep.name,
+                        "age": _calculate_age(dep.birth_date),
+                        "classes": dep_classes,
+                    }
+                )
+        return {
+            "show_classes": show_classes,
+            "classes": classes,
+            "show_dependents": show_dependents,
+            "dependents": dependents_data,
+        }
 
     def _fetch_class_names(
         self, db, data: SignupRequest
