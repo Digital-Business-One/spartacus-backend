@@ -190,7 +190,10 @@ class AuthService:
                 to=email,
                 name=user_data.get("name", ""),
                 title="E-mail confirmado",
-                message="Seu e-mail foi verificado com sucesso. Seu cadastro está em análise pela equipe.",
+                message=(
+                    "Seu e-mail foi verificado com sucesso. "
+                    "Seu cadastro está em análise pela equipe."
+                ),
             ),
         )
 
