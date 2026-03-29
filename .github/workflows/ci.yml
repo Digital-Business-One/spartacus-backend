@@ -116,6 +116,42 @@ jobs:
             --platform=managed \
             --quiet
 
+  # ─── Deploy → Cloud Function (send-email) ──────────────────────────────────
+  deploy-function:
+    name: Deploy → Cloud Function
+    needs: [test, test-integration]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticar no GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Cloud Function send-email
+        run: |
+          gcloud functions deploy send-email \
+            --gen2 \
+            --runtime python312 \
+            --region ${{ env.REGION }} \
+            --source ./functions/send_email \
+            --entry-point handle_pubsub \
+            --trigger-topic email-notifications \
+            --service-account fn-send-email@${{ secrets.FIREBASE_PROJECT_ID }}.iam.gserviceaccount.com \
+            --set-secrets SENDGRID_API_KEY=SENDGRID_API_KEY:latest \
+            --memory 256Mi \
+            --timeout 30s \
+            --quiet
+
   # ─── Seed (manual via workflow_dispatch) ────────────────────────────────────
   seed:
     name: Seed → Firestore
