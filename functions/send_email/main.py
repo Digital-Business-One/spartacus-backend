@@ -21,6 +21,7 @@ Deployment:
       --timeout 30s
 """
 
+import json
 import os
 
 import functions_framework
@@ -65,7 +66,11 @@ def handle_firestore(cloud_event):
         doc_path = doc_path[len("documents/"):]
 
     # Parse fields from Firestore protobuf format
-    raw_fields = cloud_event.data.get("value", {}).get("fields", {})
+    # cloud_event.data may arrive as bytes in Cloud Functions 2nd gen
+    data_payload = cloud_event.data
+    if isinstance(data_payload, (bytes, str)):
+        data_payload = json.loads(data_payload)
+    raw_fields = data_payload.get("value", {}).get("fields", {})
     fields = {k: _extract_value(v) for k, v in raw_fields.items()}
 
     template_id = fields.get("template_id", "")
