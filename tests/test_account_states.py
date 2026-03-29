@@ -1,4 +1,8 @@
-"""Unit tests for the account state machine (pure domain logic)."""
+"""Unit tests for the account state machine (pure domain logic).
+
+Email verification is NOT part of the state machine — it is an auth concern.
+All accounts start at PENDING_APPROVAL regardless of login method.
+"""
 
 from app.domain.account_states import (
     AccountStatus,
@@ -19,8 +23,8 @@ class TestResolveRoleGroup:
     def test_student_needs_anamnese(self):
         assert resolve_role_group(["student"]) == RoleGroup.NEEDS_ANAMNESE
 
-    def test_guardian_needs_anamnese(self):
-        assert resolve_role_group(["guardian"]) == RoleGroup.NEEDS_ANAMNESE
+    def test_guardian_no_anamnese(self):
+        assert resolve_role_group(["guardian"]) == RoleGroup.NO_ANAMNESE
 
     def test_student_and_guardian_needs_anamnese(self):
         assert resolve_role_group(["student", "guardian"]) == RoleGroup.NEEDS_ANAMNESE
@@ -38,7 +42,7 @@ class TestResolveRoleGroup:
         assert resolve_role_group(["supporter"]) == RoleGroup.NO_ANAMNESE
 
 
-# ── Available actions: student/guardian track ──────────────────────────────────
+# ── Available actions: student track ─────────────────────────────────────────
 
 
 class TestActionsNeedsAnamnese:
@@ -48,7 +52,7 @@ class TestActionsNeedsAnamnese:
         assert "approve_to_medical" in names
         assert "request_revision" in names
         assert "reject" in names
-        assert "approve" not in names  # students can't skip anamnese
+        assert "approve" not in names
 
     def test_waiting_medical_history_user_actions(self):
         actions = get_available_actions(S.WAITING_MEDICAL_HISTORY, ["student"], "user")
@@ -56,8 +60,7 @@ class TestActionsNeedsAnamnese:
         assert "submit_medical_history" in names
 
     def test_pending_medical_approval_team(self):
-        status = S.PENDING_MEDICAL_HISTORY_APPROVAL
-        actions = get_available_actions(status, ["student"], "team")
+        actions = get_available_actions(S.PENDING_MEDICAL_HISTORY_APPROVAL, ["student"], "team")
         names = {a.action for a in actions}
         assert "approve_medical" in names
         assert "request_revision" in names
@@ -79,18 +82,40 @@ class TestActionsNoAnamnese:
         names = {a.action for a in actions}
         assert "approve" in names
         assert "request_revision" in names
-        assert "approve_to_medical" not in names  # no anamnese for teachers
-        assert "reject" not in names  # reject only for anamnese track
+        assert "approve_to_medical" not in names
+        assert "reject" not in names
+
+    def test_pending_approval_guardian(self):
+        actions = get_available_actions(S.PENDING_APPROVAL, ["guardian"], "team")
+        names = {a.action for a in actions}
+        assert "approve" in names
+        assert "request_revision" in names
+        assert "approve_to_medical" not in names
 
     def test_approved_teacher_actions(self):
         actions = get_available_actions(S.APPROVED, ["teacher"], "team")
         names = {a.action for a in actions}
         assert "request_revision" in names
         assert "archive" in names
-        assert "expel" not in names  # expel only for anamnese track
+        assert "expel" not in names
 
 
-# ── Registration review (reachable from many states) ──────────────────────────
+# ── Guardian-specific flow ───────────────────────────────────────────────────
+
+
+class TestGuardianFlow:
+    def test_guardian_can_be_approved_directly(self):
+        assert can_transition(S.PENDING_APPROVAL, S.APPROVED, ["guardian"])
+
+    def test_guardian_cannot_go_to_medical(self):
+        assert not can_transition(S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["guardian"])
+
+    def test_guardian_student_goes_to_medical(self):
+        assert can_transition(S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["guardian", "student"])
+        assert not can_transition(S.PENDING_APPROVAL, S.APPROVED, ["guardian", "student"])
+
+
+# ── Registration review ──────────────────────────────────────────────────────
 
 
 class TestRegistrationReview:
@@ -115,8 +140,7 @@ class TestRegistrationReview:
         assert any(a.action == "request_revision" for a in actions)
 
     def test_user_submits_revision(self):
-        status = S.WAITING_REGISTRATION_REVIEW
-        actions = get_available_actions(status, ["student"], "user")
+        actions = get_available_actions(S.WAITING_REGISTRATION_REVIEW, ["student"], "user")
         assert any(a.action == "submit_revision" for a in actions)
 
     def test_revised_to_approved(self):
@@ -142,14 +166,17 @@ class TestFindTransition:
         assert t is None
 
     def test_action_wrong_role_group(self):
-        # approve (direct) is only for no_anamnese
         t = find_transition(S.PENDING_APPROVAL, "approve", ["student"])
         assert t is None
 
-    def test_system_transition(self):
-        t = find_transition(S.WAITING_EMAIL_CONFIRMATION, "confirm_email", ["student"])
+    def test_guardian_approve_direct(self):
+        t = find_transition(S.PENDING_APPROVAL, "approve", ["guardian"])
         assert t is not None
-        assert t.target == S.PENDING_APPROVAL
+        assert t.target == S.APPROVED
+
+    def test_guardian_cannot_approve_to_medical(self):
+        t = find_transition(S.PENDING_APPROVAL, "approve_to_medical", ["guardian"])
+        assert t is None
 
 
 # ── can_transition ─────────────────────────────────────────────────────────────
@@ -166,9 +193,7 @@ class TestCanTransition:
         assert not can_transition(S.PENDING_APPROVAL, S.APPROVED, ["student"])
 
     def test_student_goes_to_medical(self):
-        assert can_transition(
-            S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["student"]
-        )
+        assert can_transition(S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["student"])
 
 
 # ── Terminal states ────────────────────────────────────────────────────────────
@@ -193,17 +218,11 @@ class TestTerminalStates:
         assert len(actions) == 2
 
 
-# ── No actions for waiting_email_confirmation (team) ──────────────────────────
+# ── No email confirmation status exists ──────────────────────────────────────
 
 
-class TestEmailConfirmation:
-    def test_no_team_actions(self):
-        status = S.WAITING_EMAIL_CONFIRMATION
-        actions = get_available_actions(status, ["student"], "team")
-        assert len(actions) == 0
-
-    def test_system_has_confirm(self):
-        status = S.WAITING_EMAIL_CONFIRMATION
-        actions = get_available_actions(status, ["student"], "system")
-        assert len(actions) == 1
-        assert actions[0].action == "confirm_email"
+class TestNoEmailStatus:
+    def test_waiting_email_not_in_enum(self):
+        """Email verification is no longer an account status."""
+        values = [s.value for s in AccountStatus]
+        assert "waiting_email_confirmation" not in values

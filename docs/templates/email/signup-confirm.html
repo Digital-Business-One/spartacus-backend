@@ -1,0 +1,280 @@
+<!--
+  Template: signup-confirm
+  Event ID: signup.email_confirmation
+  Rules.py key: TBD_SIGNUP_CONFIRM
+
+  Variáveis de personalização (payload):
+    - name          (string)  — nome do usuário
+    - email         (string)  — e-mail do usuário
+    - phone         (string)  — telefone
+    - roles_label   (string)  — perfis em português ("Aluno, Responsável")
+    - link          (string)  — link de verificação do Firebase Auth
+    - show_classes  (boolean) — exibir seção de turmas
+    - classes       (array)   — [{"name": "Jiu Jitsu — Ter/Qui 18h"}, ...]
+    - show_dependents (boolean) — exibir tabela de dependentes
+    - dependents    (array)   — [{"name": "Pedro", "age": "12 anos", "classes": "Capoeira"}, ...]
+-->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirme seu e-mail — Spartacus</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #0B0D12;
+      font-family: 'Inter', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+      color: #E5E5E5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+    .header {
+      text-align: center;
+      padding-bottom: 32px;
+      border-bottom: 1px solid #2A2D38;
+    }
+    .logo {
+      font-family: 'Oswald', 'Bebas Neue', sans-serif;
+      font-size: 28px;
+      font-weight: 700;
+      color: #C6A34E;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+    .logo-sub {
+      font-size: 11px;
+      color: #A0A8B4;
+      letter-spacing: 2px;
+      margin-top: 4px;
+    }
+    .content {
+      padding: 32px 0;
+    }
+    h1 {
+      font-family: 'Oswald', sans-serif;
+      font-size: 22px;
+      font-weight: 600;
+      color: #C6A34E;
+      margin: 0 0 16px;
+    }
+    h2 {
+      font-family: 'Oswald', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      color: #C6A34E;
+      margin: 32px 0 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    p {
+      font-size: 15px;
+      line-height: 1.7;
+      color: #E0E0E0;
+      margin: 8px 0;
+    }
+    .highlight {
+      color: #E5E5E5;
+      font-weight: 600;
+    }
+    .btn-wrapper {
+      text-align: center;
+      padding: 28px 0;
+    }
+    .btn {
+      display: inline-block;
+      padding: 16px 40px;
+      background-color: #C6A34E;
+      color: #0B0D12;
+      font-family: 'Oswald', sans-serif;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      text-decoration: none;
+      border-radius: 6px;
+    }
+    .summary-card {
+      background-color: #2A2D38;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 24px 0;
+    }
+    .summary-row {
+      display: flex;
+      padding: 6px 0;
+      font-size: 14px;
+    }
+    .summary-label {
+      color: #A0A8B4;
+      min-width: 100px;
+    }
+    .summary-value {
+      color: #E5E5E5;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+    }
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      background-color: #1A1D26;
+      color: #C6A34E;
+      font-family: 'Oswald', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      border-bottom: 2px solid #C6A34E;
+    }
+    td {
+      padding: 10px 12px;
+      font-size: 14px;
+      color: #E0E0E0;
+      border-bottom: 1px solid #2A2D38;
+    }
+    .note {
+      font-size: 13px;
+      color: #A0A8B4;
+      font-style: italic;
+      margin-top: 24px;
+    }
+    .divider {
+      border: none;
+      border-top: 1px solid #2A2D38;
+      margin: 32px 0;
+    }
+    .footer {
+      text-align: center;
+      padding-top: 24px;
+      border-top: 1px solid #2A2D38;
+    }
+    .footer p {
+      font-size: 12px;
+      color: #777;
+      margin: 4px 0;
+    }
+    .footer .org {
+      color: #C6A34E;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+
+    <!-- HEADER -->
+    <div class="header">
+      <img src="https://spartacus.app.br/images/logo.png" alt="Spartacus" width="80" height="80" style="display:block;margin:0 auto 12px;" />
+      <div class="logo">SPARTACUS</div>
+      <div class="logo-sub">ARTES MARCIAIS</div>
+    </div>
+
+    <!-- CONTENT -->
+    <div class="content">
+      <h1>Confirme seu e-mail</h1>
+
+      <p>Olá, <span class="highlight">{{name}}</span>!</p>
+
+      <p>
+        Recebemos sua solicitação de cadastro no Projeto Spartacus
+        como <span class="highlight">{{roles_label}}</span>.
+        Para continuar, confirme seu e-mail clicando no botão abaixo.
+      </p>
+
+      <div class="btn-wrapper">
+        <a href="{{link}}" class="btn">Confirmar meu e-mail</a>
+      </div>
+
+      <p class="note">
+        O link expira em 24 horas. Após a confirmação, sua conta
+        será analisada pela equipe do projeto.
+      </p>
+
+      <hr class="divider">
+
+      <!-- RESUMO DO CADASTRO -->
+      <h2>Resumo do cadastro</h2>
+
+      <div class="summary-card">
+        <div class="summary-row">
+          <span class="summary-label">Nome</span>
+          <span class="summary-value">{{name}}</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">E-mail</span>
+          <span class="summary-value">{{email}}</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Telefone</span>
+          <span class="summary-value">{{phone}}</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Perfil</span>
+          <span class="summary-value">{{roles_label}}</span>
+        </div>
+      </div>
+
+      <!-- TURMAS (condicional: aluno, professor, instrutor) -->
+      {% if show_classes %}
+      <h2>Turmas inscritas</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Turma</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for class in classes %}
+          <tr>
+            <td>{{class.name}}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      <!-- DEPENDENTES (condicional: responsável) -->
+      {% if show_dependents %}
+      <h2>Dependentes cadastrados</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Nome</th>
+            <th>Idade</th>
+            <th>Turmas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for dep in dependents %}
+          <tr>
+            <td>{{dep.name}}</td>
+            <td>{{dep.age}}</td>
+            <td>{{dep.classes|default('—')}}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      <p class="note">
+        Se você não solicitou esse cadastro, ignore este e-mail.
+      </p>
+    </div>
+
+    <!-- FOOTER -->
+    <div class="footer">
+      <p class="org">Projeto Spartacus Artes Marciais</p>
+      <p>Brasnorte — MT</p>
+    </div>
+
+  </div>
+</body>
+</html>
