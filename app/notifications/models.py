@@ -14,6 +14,8 @@ class DomainEvent:
 
 @dataclass
 class SignupEmailPayload:
+    """Rich payload for signup confirmation emails (email + Google)."""
+
     uid: str
     status: str
     to: str
@@ -34,6 +36,7 @@ class SignupEmailPayload:
             "phone": self.phone,
             "roles_label": self.roles_label,
             "link": self.link,
+            "show_link": bool(self.link),
             "show_classes": self.show_classes,
             "classes": self.classes,
             "show_dependents": self.show_dependents,
@@ -42,25 +45,36 @@ class SignupEmailPayload:
 
 
 @dataclass
-class SignupGooglePayload:
-    uid: str
-    status: str
-
-
-@dataclass
-class AccountReceivedPayload:
-    to: str
-    name: str
-
-    def personalization(self) -> dict:
-        return {"name": self.name}
-
-
-@dataclass
 class ResendVerificationPayload:
+    """Resend email verification link."""
+
     to: str
     name: str
     link: str
 
     def personalization(self) -> dict:
-        return {"name": self.name, "link": self.link}
+        return {"name": self.name, "link": self.link, "show_link": True}
+
+
+@dataclass
+class AccountNotificationPayload:
+    """Generic notification payload: title + message + optional CTA.
+
+    Used for: approval, rejection, anamnese, revision.
+    """
+
+    to: str
+    name: str
+    title: str
+    message: str
+    cta_text: str = ""
+    cta_url: str = ""
+
+    def personalization(self) -> dict:
+        return {
+            "name": self.name,
+            "title": self.title,
+            "message": self.message,
+            "cta_text": self.cta_text,
+            "cta_url": self.cta_url,
+        }

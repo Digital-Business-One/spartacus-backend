@@ -9,19 +9,20 @@ with patch("firebase_admin.initialize_app"):
 client = TestClient(app)
 
 
-class TestFirestoreMailAdapter:
-    def test_send_writes_document_to_mail_collection(self):
+class TestNotificationAdapter:
+    def test_send_writes_to_notifications_collection(self):
         mock_db = MagicMock()
+        os.environ["FIRESTORE_EMULATOR_HOST"] = "localhost:8080"
         with patch(
             "app.notifications.adapters.firestore_mail.firestore"
         ) as mock_fs:
             mock_fs.client.return_value = mock_db
 
             from app.notifications.adapters.firestore_mail import (
-                FirestoreMailAdapter,
+                NotificationAdapter,
             )
 
-            FirestoreMailAdapter().send(
+            NotificationAdapter().send(
                 event_id="test.event",
                 template_id="tmpl-123",
                 subject="Assunto teste",
@@ -29,43 +30,13 @@ class TestFirestoreMailAdapter:
                 data={"name": "Test"},
             )
 
-            mock_db.collection.assert_called_once_with("emails")
+            mock_db.collection.assert_called_once_with("notifications")
             doc = mock_db.collection.return_value.add.call_args[0][0]
             assert doc["template_id"] == "tmpl-123"
             assert doc["subject"] == "Assunto teste"
-            assert doc["to"] == [{"email": "destino@example.com"}]
-            assert doc["from"]["email"] == "noreply@spartacus.app.br"
-            assert doc["personalization"] == [
-                {"email": "destino@example.com", "data": {"name": "Test"}}
-            ]
-            assert doc["tags"] == ["test.event"]
-
-    def test_send_with_email_key_in_data(self):
-        mock_db = MagicMock()
-        with patch(
-            "app.notifications.adapters.firestore_mail.firestore"
-        ) as mock_fs:
-            mock_fs.client.return_value = mock_db
-
-            from app.notifications.adapters.firestore_mail import (
-                FirestoreMailAdapter,
-            )
-
-            FirestoreMailAdapter().send(
-                event_id="signup.email_confirmation",
-                template_id="tmpl-456",
-                subject="Confirme seu e-mail",
-                to="carlos@email.com",
-                data={
-                    "name": "Carlos",
-                    "email": "carlos@email.com",
-                    "phone": "(65) 99887-6543",
-                },
-            )
-
-            doc = mock_db.collection.return_value.add.call_args[0][0]
-            assert doc["personalization"][0]["data"]["email"] == "carlos@email.com"
-            assert doc["personalization"][0]["email"] == "carlos@email.com"
+            assert doc["to"] == "destino@example.com"
+            assert doc["from_email"] == "noreply@spartacus.app.br"
+            assert doc["data"]["name"] == "Test"
 
 
 _PROJECT_ID = "test-project"

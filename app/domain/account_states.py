@@ -2,6 +2,10 @@
 
 This module has ZERO IO dependencies — no Firestore, no Firebase, no HTTP.
 It defines states, transitions, and pure functions that other layers consume.
+
+Email verification is NOT an account status — it is an auth-layer concern
+stored as a field (emailVerified) on the user document.
+All accounts start at PENDING_APPROVAL regardless of login method.
 """
 
 from dataclasses import dataclass
@@ -11,7 +15,6 @@ from enum import StrEnum
 
 
 class AccountStatus(StrEnum):
-    WAITING_EMAIL_CONFIRMATION = "waiting_email_confirmation"
     PENDING_APPROVAL = "pending_approval"
     WAITING_MEDICAL_HISTORY = "waiting_medical_history"
     PENDING_MEDICAL_HISTORY_APPROVAL = "pending_medical_history_approval"
@@ -31,7 +34,7 @@ class RoleGroup(StrEnum):
     NO_ANAMNESE = "no_anamnese"
 
 
-_ANAMNESE_ROLES = frozenset({"student", "guardian"})
+_ANAMNESE_ROLES = frozenset({"student"})
 
 BOTH = frozenset({RoleGroup.NEEDS_ANAMNESE, RoleGroup.NO_ANAMNESE})
 ANAMNESE_ONLY = frozenset({RoleGroup.NEEDS_ANAMNESE})
@@ -55,21 +58,16 @@ class Transition:
     action: str
     label: str
     role_groups: frozenset[RoleGroup]
-    executed_by: str  # "system" | "team" | "user"
+    executed_by: str  # "team" | "user"
 
 
 S = AccountStatus  # shorthand
 
 TRANSITIONS: list[Transition] = [
-    # ── System transitions ───────────────────────────────────────────────
-    Transition(
-        S.WAITING_EMAIL_CONFIRMATION, S.PENDING_APPROVAL,
-        "confirm_email", "Confirmar e-mail", BOTH, "system",
-    ),
     # ── Team transitions: pending_approval ────────────────────────────────
     Transition(
         S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY,
-        "approve_to_medical", "Encaminhar para anamnese",
+        "approve_to_medical", "Enc. anamnese",
         ANAMNESE_ONLY, "team",
     ),
     Transition(
@@ -150,7 +148,7 @@ TRANSITIONS: list[Transition] = [
     ),
     Transition(
         S.REVISED_REGISTRATION, S.WAITING_MEDICAL_HISTORY,
-        "approve_to_medical", "Encaminhar para anamnese",
+        "approve_to_medical", "Enc. anamnese",
         ANAMNESE_ONLY, "team",
     ),
     Transition(

@@ -8,7 +8,12 @@ from app.domain.account_states import (
     get_available_actions,
 )
 from app.logging.decorator import log
-from app.models.account import AccountAction, AccountOut, TransitionResponse
+from app.models.account import (
+    AccountAction,
+    AccountOut,
+    AddressOut,
+    TransitionResponse,
+)
 from app.notifications.models import DomainEvent
 
 
@@ -233,11 +238,13 @@ class AccountService:
         for dep_doc in deps:
             dep = dep_doc.to_dict()
             dep_status = dep.get("approvalStatus", "")
-            # Only auto-approve if in an approvable state
-            if dep_status in (
-                AccountStatus.PENDING_APPROVAL,
-                AccountStatus.PENDING_MEDICAL_HISTORY_APPROVAL,
-            ):
+            if dep_status == AccountStatus.PENDING_APPROVAL:
+                # Send student dependents to anamnese (not straight to approved)
+                dep_doc.reference.update(
+                    {"approvalStatus": AccountStatus.WAITING_MEDICAL_HISTORY}
+                )
+            elif dep_status == AccountStatus.PENDING_MEDICAL_HISTORY_APPROVAL:
+                # Already submitted anamnese — approve and activate
                 dep_doc.reference.update(
                     {"approvalStatus": AccountStatus.APPROVED}
                 )
@@ -259,15 +266,30 @@ class AccountService:
         class_names = [
             names_map.get(cid, cid) for cid in class_ids
         ]
+        addr_data = user.get("address")
+        address = None
+        if addr_data and isinstance(addr_data, dict):
+            address = AddressOut(
+                postal_code=addr_data.get("postalCode"),
+                street=addr_data.get("street"),
+                number=addr_data.get("number"),
+                complement=addr_data.get("complement"),
+                neighborhood=addr_data.get("neighborhood"),
+                city=addr_data.get("city"),
+                state=addr_data.get("state"),
+            )
         return AccountOut(
             uid=uid,
             name=user.get("name", ""),
             email=user.get("email", ""),
             roles=roles,
             status=status,
+            email_verified=user.get("emailVerified", False),
             birth_date=user.get("birthDate"),
             gender=user.get("gender"),
             phone=user.get("phone"),
+            whatsapp=user.get("whatsapp"),
+            address=address,
             created_at=user.get("createdAt"),
             is_dependent=user.get("isDependent", False),
             guardian_uid=user.get("guardianUid"),
@@ -283,6 +305,56 @@ class AccountService:
             ],
         )
 
+    _APP_URL = "https://spartacus.app.br"
+
+    _ACTION_EMAIL_MAP: dict[str, dict] = {
+        "approve": {
+            "title": "Cadastro aprovado!",
+            "message": (
+                "Parabéns! Seu cadastro no Projeto Spartacus foi aprovado. "
+                "Agora você pode acessar o nosso aplicativo e a plataforma "
+                "digital Spartacus. Estamos muito felizes em ter você com a gente!"
+            ),
+            "cta_text": "Acessar plataforma",
+        },
+        "reject": {
+            "title": "Atualização sobre seu cadastro",
+            "message": (
+                "Gostaríamos de informar que, neste momento, não foi possível "
+                "aprovar seu cadastro no Projeto Spartacus. Sabemos que isso "
+                "pode ser frustrante, mas queremos que saiba que as portas do "
+                "Spartacus continuam abertas. Caso tenha dúvidas ou queira "
+                "tentar novamente, entre em contato conosco."
+            ),
+        },
+        "approve_to_medical": {
+            "title": "Próximo passo: anamnese",
+            "message": (
+                "Seu cadastro avançou para a próxima etapa! Para dar continuidade, "
+                "acesse o aplicativo Spartacus e preencha o formulário de anamnese. "
+                "Ele é rápido e importante para garantir a segurança nas atividades."
+            ),
+            "cta_text": "Preencher anamnese",
+        },
+        "approve_medical": {
+            "title": "Anamnese aprovada!",
+            "message": (
+                "Sua anamnese foi analisada e aprovada pela equipe do Spartacus. "
+                "Seu cadastro está completo e você já pode participar das atividades!"
+            ),
+            "cta_text": "Acessar plataforma",
+        },
+        "request_revision": {
+            "title": "Revisão cadastral solicitada",
+            "message": (
+                "A equipe do Spartacus identificou que alguns dados do seu "
+                "cadastro precisam ser revisados. Acesse o aplicativo para "
+                "verificar e atualizar as informações solicitadas."
+            ),
+            "cta_text": "Revisar cadastro",
+        },
+    }
+
     def _build_event(
         self,
         action: str,
@@ -293,13 +365,21 @@ class AccountService:
         email = user.get("email")
         if not email:
             return None
-        from app.notifications.models import AccountReceivedPayload
 
-        # Reuse existing payload for now — specific templates later
+        config = self._ACTION_EMAIL_MAP.get(action)
+        if not config:
+            return None
+
+        from app.notifications.models import AccountNotificationPayload
+
         return DomainEvent(
             id=f"account.{action}",
-            payload=AccountReceivedPayload(
+            payload=AccountNotificationPayload(
                 to=email,
                 name=user.get("name", ""),
+                title=config["title"],
+                message=config["message"],
+                cta_text=config.get("cta_text", ""),
+                cta_url=self._APP_URL if config.get("cta_text") else "",
             ),
         )
