@@ -28,6 +28,10 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
+
+# Add project root to path so we can import app modules
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import firebase_admin
 from firebase_admin import credentials, firestore
