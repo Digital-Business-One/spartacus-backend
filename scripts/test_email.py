@@ -25,7 +25,6 @@ Uso:
 """
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -180,35 +179,9 @@ def write_notification(to: str, event_id: str) -> str:
     return doc_ref.id
 
 
-def publish_pubsub(to: str, event_id: str) -> None:
-    from google.cloud import pubsub_v1
-
-    rule = RULES[event_id]
-    data = PAYLOADS[event_id]
-
-    payload = {
-        "event_id": event_id,
-        "template_id": rule["template_id"],
-        "subject": rule["subject"],
-        "to": to,
-        "from_email": _FROM_EMAIL,
-        "from_name": _FROM_NAME,
-        "data": data,
-    }
-
-    project = os.environ.get(
-        "GOOGLE_CLOUD_PROJECT", "spartacus-artes-marciais"
-    )
-    topic = f"projects/{project}/topics/email-notifications"
-
-    publisher = pubsub_v1.PublisherClient()
-    future = publisher.publish(topic, json.dumps(payload).encode("utf-8"))
-    print(f"  PubSub message ID: {future.result()}")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Testa pipeline de e-mail (Firestore + PubSub → SendGrid)."
+        description="Testa pipeline de e-mail (Firestore → Eventarc → SendGrid)."
     )
     parser.add_argument(
         "--to",
@@ -224,7 +197,7 @@ def main() -> None:
     parser.add_argument(
         "--real",
         action="store_true",
-        help="Modo real: escreve no Firestore + publica no PubSub. ENVIA E-MAIL!",
+        help="Modo real: escreve no Firestore de produção. Eventarc aciona envio!",
     )
     parser.add_argument(
         "--list",
@@ -258,7 +231,8 @@ def main() -> None:
 
     if args.real:
         confirm = input(
-            "\n  ⚠  Modo REAL — vai publicar no PubSub e ENVIAR e-mail."
+            "\n  ⚠  Modo REAL — escreve no Firestore de produção."
+            "\n  Eventarc aciona a Cloud Function que ENVIA o e-mail."
             "\n  Continuar? [y/N] "
         )
         if confirm.lower() != "y":
@@ -272,9 +246,7 @@ def main() -> None:
     print(f"  Doc criado: {_COLLECTION}/{doc_id}")
 
     if args.real:
-        print("\n  Publicando no PubSub...")
-        publish_pubsub(args.to, args.event)
-        print("  Cloud Function deve processar e enviar o e-mail.")
+        print("\n  Eventarc deve acionar a Cloud Function automaticamente.")
     else:
         print(
             f"\n  Verifique no Emulator UI:"

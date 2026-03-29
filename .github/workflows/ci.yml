@@ -144,8 +144,11 @@ jobs:
             --runtime python312 \
             --region ${{ env.REGION }} \
             --source ./functions/send_email \
-            --entry-point handle_pubsub \
-            --trigger-topic email-notifications \
+            --entry-point handle_firestore \
+            --trigger-event-filters="type=google.cloud.firestore.document.v1.created" \
+            --trigger-event-filters="database=(default)" \
+            --trigger-event-filters-path-pattern="document=notifications/{docId}" \
+            --trigger-location=${{ env.REGION }} \
             --service-account fn-send-email@${{ secrets.FIREBASE_PROJECT_ID }}.iam.gserviceaccount.com \
             --set-secrets SENDGRID_API_KEY=SENDGRID_API_KEY:latest \
             --memory 256Mi \
