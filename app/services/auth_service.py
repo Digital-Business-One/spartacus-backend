@@ -6,7 +6,7 @@ from firebase_admin import auth, firestore
 from app.logging.decorator import log
 from app.models.auth import ResendVerificationRequest, SignupRequest
 from app.notifications.models import (
-    AccountReceivedPayload,
+    AccountNotificationPayload,
     DomainEvent,
     ResendVerificationPayload,
     SignupEmailPayload,
@@ -186,9 +186,11 @@ class AuthService:
         user_ref.update({"emailVerified": True})
         return DomainEvent(
             id="signup.email_verified",
-            payload=AccountReceivedPayload(
+            payload=AccountNotificationPayload(
                 to=email,
                 name=user_data.get("name", ""),
+                title="E-mail confirmado",
+                message="Seu e-mail foi verificado com sucesso. Seu cadastro está em análise pela equipe.",
             ),
         )
 
