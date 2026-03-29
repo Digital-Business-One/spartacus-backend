@@ -13,7 +13,9 @@ on:
         default: "classes"
         type: choice
         options:
+          - root_project
           - classes
+          - admin_account
           - all
 
 env:
@@ -23,6 +25,7 @@ jobs:
   # ─── Lint & Testes unitários ────────────────────────────────────────────────
   test:
     name: Lint & Unit Tests
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +50,7 @@ jobs:
   test-integration:
     name: Integration Tests
     needs: test
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -139,6 +143,14 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
+      - name: Seed ROOT project
+        if: inputs.seed == 'root_project' || inputs.seed == 'all'
+        env:
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
+          ROOT_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_PROJECT_ID }}.firebasestorage.app
+        run: uv run python seeds/seed_root_project.py
+
       - name: Seed classes
         if: inputs.seed == 'classes' || inputs.seed == 'all'
         env:
@@ -146,10 +158,9 @@ jobs:
           ROOT_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
         run: uv run python seeds/seed_classes.py
 
-      - name: Seed ROOT project
-        if: inputs.seed == 'all'
+      - name: Seed admin account
+        if: inputs.seed == 'admin_account' || inputs.seed == 'all'
         env:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
           ROOT_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_PROJECT_ID }}.firebasestorage.app
-        run: uv run python seeds/seed.py
+        run: uv run python seeds/seed_admin_account.py

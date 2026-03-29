@@ -86,7 +86,7 @@ class AuthService:
                     display_name=data.name,
                 )
                 uid = existing.uid
-            approval_status = "pending_email"
+            approval_status = "waiting_email_confirmation"
         else:
             uid = google_uid
             approval_status = "pending_approval"
@@ -211,7 +211,7 @@ class AuthService:
             )
         user_data = user_doc.to_dict()
         current_status = user_data.get("approvalStatus")
-        if current_status != "pending_email":
+        if current_status != "waiting_email_confirmation":
             return None
         user_ref.update({"approvalStatus": "pending_approval"})
         return DomainEvent(
@@ -234,7 +234,7 @@ class AuthService:
         if not results:
             return None
         user_data = results[0].to_dict()
-        if user_data.get("approvalStatus") != "pending_email":
+        if user_data.get("approvalStatus") != "waiting_email_confirmation":
             return None
         link = auth.generate_email_verification_link(data.email)
         return DomainEvent(

@@ -12,7 +12,7 @@ Usage (local dev with emulators running):
     FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 \
     GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais \
     ROOT_PROJECT_ID=spartacus-artes-marciais \
-    uv run python seeds/seed.py
+    uv run python seeds/seed_root_project.py
 """
 import os
 from datetime import datetime, timezone
@@ -70,7 +70,7 @@ def run() -> None:
     logo_path = _ASSETS_DIR / "logo.jpg"
     bucket_name = os.getenv(
         "FIREBASE_STORAGE_BUCKET",
-        f"{gcp_project}.appspot.com" if storage_emulator else f"{gcp_project}.firebasestorage.app",
+        f"{gcp_project}.firebasestorage.app",
     )
     object_path = f"projects/{project_id}/logo.jpg"
 
@@ -92,8 +92,9 @@ def run() -> None:
         bucket = storage.bucket(bucket_name)
         blob = bucket.blob(object_path)
         blob.upload_from_filename(str(logo_path), content_type="image/jpeg")
-        blob.make_public()
-        logo_url = blob.public_url
+        # Public access is handled by IAM (uniform bucket-level access),
+        # not legacy ACL — so no blob.make_public() needed.
+        logo_url = f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/{object_path.replace('/', '%2F')}?alt=media"
 
     # ── Upsert ROOT project document ─────────────────────────────────────────
     db = firestore.client()
