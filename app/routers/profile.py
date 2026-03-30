@@ -1,6 +1,7 @@
 from typing import Optional
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, UploadFile
+from firebase_admin import firestore
 
 from app.logging.decorator import log
 from app.models.profile import (
@@ -15,6 +16,7 @@ from app.models.profile import (
 )
 from app.security.context import auth_ctx
 from app.services.profile_service import ProfileService
+from app.services.storage_service import StorageService
 
 router = APIRouter(prefix="/users/me", tags=["profile"])
 
@@ -128,3 +130,48 @@ def update_competition(
         data=data,
     )
     return {"status": "updated"}
+
+
+@log
+@router.post("/photo")
+async def upload_photo(
+    file: UploadFile,
+    x_acting_as: Optional[str] = Header(None),
+) -> dict:
+    ctx = auth_ctx.get()
+    target_uid = x_acting_as or ctx.user_id
+    if x_acting_as:
+        ProfileService()._assert_guardian_of(
+            ctx.user_id, target_uid,
+        )
+
+    photo_url = await StorageService().upload_avatar(
+        target_uid, file,
+    )
+
+    db = firestore.client()
+    db.collection("users").document(target_uid).update(
+        {"photoUrl": photo_url},
+    )
+    return {"status": "uploaded", "photo_url": photo_url}
+
+
+@log
+@router.delete("/photo")
+def delete_photo(
+    x_acting_as: Optional[str] = Header(None),
+) -> dict:
+    ctx = auth_ctx.get()
+    target_uid = x_acting_as or ctx.user_id
+    if x_acting_as:
+        ProfileService()._assert_guardian_of(
+            ctx.user_id, target_uid,
+        )
+
+    StorageService().delete_avatar(target_uid)
+
+    db = firestore.client()
+    db.collection("users").document(target_uid).update(
+        {"photoUrl": None},
+    )
+    return {"status": "deleted"}

@@ -9,6 +9,8 @@ dependencies = [
   "google-cloud-pubsub>=2.23",
   "structlog>=24.0",
   "python-dotenv>=1.2.1",
+  "pillow>=11.0",
+  "python-multipart>=0.0.9",
 ]
 
 [dependency-groups]

@@ -1,3 +1,4 @@
+import io
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -420,6 +421,133 @@ class TestUpdateClasses:
             )
 
         assert resp.status_code == 200
+
+
+# ── POST /users/me/photo ──────────────────────────────────────────────────────
+
+_STORAGE = "app.services.storage_service"
+_ROUTER_FS = "app.routers.profile.firestore"
+
+
+def _make_test_image(
+    width=400, height=400, fmt="JPEG",
+):
+    from PIL import Image
+
+    img = Image.new("RGB", (width, height), color="red")
+    buf = io.BytesIO()
+    img.save(buf, format=fmt)
+    buf.seek(0)
+    return buf
+
+
+class TestUploadPhoto:
+    def test_uploads_valid_jpeg(self):
+        img_buf = _make_test_image()
+
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+        mock_bucket.name = "test-bucket"
+
+        mock_db = MagicMock()
+
+        with (
+            patch(_VERIFY, return_value=_VALID_CLAIMS,
+            ),
+            patch(
+                f"{_STORAGE}._get_bucket",
+                return_value=mock_bucket,
+            ),
+            patch(_ROUTER_FS) as mock_fs,
+        ):
+            mock_fs.client.return_value = mock_db
+            resp = client.post(
+                "/users/me/photo",
+                headers=_HEADERS,
+                files={
+                    "file": ("avatar.jpg", img_buf, "image/jpeg"),
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "uploaded"
+        assert "photo_url" in data
+        mock_blob.upload_from_file.assert_called_once()
+
+    def test_rejects_invalid_content_type(self):
+        with patch(_VERIFY, return_value=_VALID_CLAIMS,
+        ):
+            resp = client.post(
+                "/users/me/photo",
+                headers=_HEADERS,
+                files={
+                    "file": (
+                        "doc.pdf", b"fake", "application/pdf",
+                    ),
+                },
+            )
+        assert resp.status_code == 400
+
+    def test_rejects_oversized_file(self):
+        # 6 MB of data
+        big_data = b"x" * (6 * 1024 * 1024)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS,
+        ):
+            resp = client.post(
+                "/users/me/photo",
+                headers=_HEADERS,
+                files={
+                    "file": (
+                        "big.jpg", big_data, "image/jpeg",
+                    ),
+                },
+            )
+        assert resp.status_code == 400
+
+    def test_rejects_small_image(self):
+        img_buf = _make_test_image(width=100, height=100)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS,
+        ):
+            resp = client.post(
+                "/users/me/photo",
+                headers=_HEADERS,
+                files={
+                    "file": (
+                        "tiny.jpg", img_buf, "image/jpeg",
+                    ),
+                },
+            )
+        assert resp.status_code == 400
+
+
+class TestDeletePhoto:
+    def test_deletes_photo(self):
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+        mock_blob.exists.return_value = True
+        mock_bucket.blob.return_value = mock_blob
+
+        mock_db = MagicMock()
+
+        with (
+            patch(_VERIFY, return_value=_VALID_CLAIMS,
+            ),
+            patch(
+                f"{_STORAGE}._get_bucket",
+                return_value=mock_bucket,
+            ),
+            patch(_ROUTER_FS) as mock_fs,
+        ):
+            mock_fs.client.return_value = mock_db
+            resp = client.delete(
+                "/users/me/photo", headers=_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "deleted"
+        mock_blob.delete.assert_called_once()
 
 
 # ── State machine: incomplete state ──────────────────────────────────────────
