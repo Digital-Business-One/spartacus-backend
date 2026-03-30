@@ -15,6 +15,7 @@ from app.routers import (
     internal,
     medical_history,
     members,
+    profile,
     projects,
 )
 from app.security.context import auth_ctx
@@ -52,6 +53,7 @@ app.include_router(members.router)
 app.include_router(classes.router)
 app.include_router(auth.router)
 app.include_router(medical_history.router)
+app.include_router(profile.router)
 
 # Firebase Admin SDK — uses Application Default Credentials on Cloud Run.
 # In local dev, uses FIREBASE_AUTH_EMULATOR_HOST if set.
