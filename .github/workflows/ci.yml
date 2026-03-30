@@ -64,11 +64,41 @@ jobs:
   #     - name: Integration tests (emuladores gerenciados pelo pytest)
   #       run: uv run pytest tests/integration/ -v
 
+  # ─── Detectar quais paths mudaram ────────────────────────────────────────────
+  changes:
+    name: Detect changed paths
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      function: ${{ steps.filter.outputs.function }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: filter
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+          # backend = anything outside functions/
+          if echo "$CHANGED" | grep -qvE '^functions/'; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+          fi
+          # function = anything inside functions/
+          if echo "$CHANGED" | grep -qE '^functions/'; then
+            echo "function=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "function=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # ─── Deploy → Cloud Run ─────────────────────────────────────────────────────
   deploy:
     name: Deploy → Cloud Run
-    needs: [test]
-    if: github.event_name == 'push'
+    needs: [test, changes]
+    if: github.event_name == 'push' && needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -115,8 +145,8 @@ jobs:
   # ─── Deploy → Cloud Function (send-email) ──────────────────────────────────
   deploy-function:
     name: Deploy → Cloud Function
-    needs: [test]
-    if: github.event_name == 'push'
+    needs: [test, changes]
+    if: github.event_name == 'push' && needs.changes.outputs.function == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
