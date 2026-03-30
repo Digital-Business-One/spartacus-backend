@@ -179,3 +179,4 @@ class MeResponse(BaseModel):
     uid: str
     email: str
     approval_status: str
+    birth_date: Optional[str] = None

@@ -52,4 +52,9 @@ RULES: dict[str, dict] = {
         "subject": "Revisão cadastral solicitada — Spartacus",
         "active": True,
     },
+    "account.submit_medical_history": {
+        "template_id": _TPL_NOTIFICATION,
+        "subject": "Anamnese enviada — Spartacus",
+        "active": True,
+    },
 }

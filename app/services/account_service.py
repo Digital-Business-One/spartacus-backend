@@ -353,6 +353,14 @@ class AccountService:
             ),
             "cta_text": "Revisar cadastro",
         },
+        "submit_medical_history": {
+            "title": "Anamnese enviada",
+            "message": (
+                "Sua ficha de anamnese foi recebida com sucesso! "
+                "Ela será analisada pela equipe do Spartacus. "
+                "Você receberá uma notificação quando a análise for concluída."
+            ),
+        },
     }
 
     def _build_event(
