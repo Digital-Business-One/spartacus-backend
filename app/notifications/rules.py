@@ -6,8 +6,8 @@ Run scripts/setup_sendgrid_templates.py to create them and update IDs here.
 
 # SendGrid Dynamic Template IDs
 # Replace with actual IDs after running setup_sendgrid_templates.py
-_TPL_SIGNUP = "TBD_SIGNUP_WELCOME"
-_TPL_NOTIFICATION = "TBD_ACCOUNT_NOTIFICATION"
+_TPL_SIGNUP = "d-d24c02e9d4134c979ddf583d011e0478"
+_TPL_NOTIFICATION = "d-6572d5ac5f4346d892e44adef0b998a4"
 
 RULES: dict[str, dict] = {
     # ── Signup ────────────────────────────────────────────────────────────────
