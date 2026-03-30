@@ -8,15 +8,17 @@ services:
     command: >
       bash -c "
       echo 'rules_version = \"2\"; service firebase.storage { match /b/{bucket}/o { match /{allPaths=**} { allow read, write: if true; } } }' > /app/storage.rules &&
-      echo '{\"storage\":{\"rules\":\"storage.rules\"},\"emulators\":{\"auth\":{\"port\":9099,\"host\":\"0.0.0.0\"},\"firestore\":{\"port\":8080,\"host\":\"0.0.0.0\"},\"storage\":{\"port\":9199,\"host\":\"0.0.0.0\"},\"ui\":{\"enabled\":true,\"host\":\"0.0.0.0\",\"port\":4000}}}' > /app/firebase.json &&
+      echo '{\"storage\":{\"rules\":\"storage.rules\"},\"emulators\":{\"auth\":{\"port\":9099,\"host\":\"0.0.0.0\"},\"firestore\":{\"port\":8080,\"host\":\"0.0.0.0\"},\"storage\":{\"port\":9199,\"host\":\"0.0.0.0\"},\"pubsub\":{\"port\":8085,\"host\":\"0.0.0.0\"},\"eventarc\":{\"port\":9299,\"host\":\"0.0.0.0\"},\"ui\":{\"enabled\":true,\"host\":\"0.0.0.0\",\"port\":4000}}}' > /app/firebase.json &&
       npx -y firebase-tools@latest emulators:start
       --project spartacus-artes-marciais
-      --only firestore,auth,storage"
+      --only firestore,auth,storage,pubsub,eventarc"
     ports:
       - "4000:4000"   # Emulator UI
       - "8080:8080"   # Firestore
+      - "8085:8085"   # Pub/Sub
       - "9099:9099"   # Auth
       - "9199:9199"   # Storage
+      - "9299:9299"   # Eventarc
     environment:
       - GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais
     healthcheck:
@@ -25,3 +27,19 @@ services:
       timeout: 5s
       retries: 10
       start_period: 60s
+
+  # ─── Cloud Function: send-email (local) ────────────────────────────────────
+  send-email:
+    build:
+      context: ./functions/send_email
+    ports:
+      - "8081:8081"
+    environment:
+      - FIRESTORE_EMULATOR_HOST=emulators:8080
+      - PUBSUB_EMULATOR_HOST=emulators:8085
+      - EVENTARC_EMULATOR_HOST=emulators:9299
+      - GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
+    depends_on:
+      emulators:
+        condition: service_healthy
