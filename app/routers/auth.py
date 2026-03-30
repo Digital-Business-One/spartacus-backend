@@ -63,11 +63,12 @@ def signup(
 @router.get("/me")
 def me() -> MeResponse:
     ctx = auth_ctx.get()
-    user_doc = AuthService().get_user_status(ctx.user_id)
+    user_data = AuthService().get_user_status(ctx.user_id)
     return MeResponse(
         uid=ctx.user_id,
         email=ctx.user_email,
-        approval_status=user_doc,
+        approval_status=user_data["approvalStatus"],
+        birth_date=user_data.get("birthDate"),
     )
 
 

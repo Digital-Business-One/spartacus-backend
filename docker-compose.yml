@@ -8,17 +8,35 @@ services:
     command: >
       bash -c "
       echo 'rules_version = \"2\"; service firebase.storage { match /b/{bucket}/o { match /{allPaths=**} { allow read, write: if true; } } }' > /app/storage.rules &&
-      echo '{\"storage\":{\"rules\":\"storage.rules\"},\"emulators\":{\"auth\":{\"port\":9099,\"host\":\"0.0.0.0\"},\"firestore\":{\"port\":8080,\"host\":\"0.0.0.0\"},\"storage\":{\"port\":9199,\"host\":\"0.0.0.0\"},\"ui\":{\"enabled\":true,\"host\":\"0.0.0.0\",\"port\":4000}}}' > /app/firebase.json &&
+      echo '{
+        \"functions\":[{\"source\":\"functions/send_email\",\"runtime\":\"python312\",\"codebase\":\"send-email\"}],
+        \"storage\":{\"rules\":\"storage.rules\"},
+        \"emulators\":{
+          \"auth\":{\"port\":9099,\"host\":\"0.0.0.0\"},
+          \"firestore\":{\"port\":8080,\"host\":\"0.0.0.0\"},
+          \"storage\":{\"port\":9199,\"host\":\"0.0.0.0\"},
+          \"functions\":{\"port\":5001,\"host\":\"0.0.0.0\"},
+          \"pubsub\":{\"port\":8085,\"host\":\"0.0.0.0\"},
+          \"eventarc\":{\"port\":9299,\"host\":\"0.0.0.0\"},
+          \"ui\":{\"enabled\":true,\"host\":\"0.0.0.0\",\"port\":4000}
+        }
+      }' > /app/firebase.json &&
       npx -y firebase-tools@latest emulators:start
       --project spartacus-artes-marciais
-      --only firestore,auth,storage"
+      --only firestore,auth,storage,functions,pubsub,eventarc"
     ports:
       - "4000:4000"   # Emulator UI
+      - "5001:5001"   # Functions
       - "8080:8080"   # Firestore
+      - "8085:8085"   # Pub/Sub
       - "9099:9099"   # Auth
       - "9199:9199"   # Storage
+      - "9299:9299"   # Eventarc
+    volumes:
+      - ./functions/send_email:/app/functions/send_email
     environment:
       - GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4000"]
       interval: 10s

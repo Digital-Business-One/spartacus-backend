@@ -15,6 +15,7 @@ from enum import StrEnum
 
 
 class AccountStatus(StrEnum):
+    INCOMPLETE = "incomplete"  # Dependent created via profile — partial data (RFC-07)
     PENDING_APPROVAL = "pending_approval"
     WAITING_MEDICAL_HISTORY = "waiting_medical_history"
     PENDING_MEDICAL_HISTORY_APPROVAL = "pending_medical_history_approval"
@@ -64,6 +65,12 @@ class Transition:
 S = AccountStatus  # shorthand
 
 TRANSITIONS: list[Transition] = [
+    # ── System transitions: incomplete (RFC-07) ──────────────────────────
+    Transition(
+        S.INCOMPLETE, S.PENDING_APPROVAL,
+        "complete_registration", "Completar cadastro",
+        ANAMNESE_ONLY, "system",
+    ),
     # ── Team transitions: pending_approval ────────────────────────────────
     Transition(
         S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY,
