@@ -15,6 +15,7 @@ from app.routers import (
     internal,
     medical_history,
     members,
+    modalities,
     profile,
     projects,
 )
@@ -51,6 +52,7 @@ app.include_router(accounts.router)
 app.include_router(projects.router)
 app.include_router(members.router)
 app.include_router(classes.router)
+app.include_router(modalities.router)
 app.include_router(auth.router)
 app.include_router(medical_history.router)
 app.include_router(profile.router)
