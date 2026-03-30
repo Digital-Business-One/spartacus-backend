@@ -21,7 +21,6 @@ Deployment:
       --timeout 30s
 """
 
-import json
 import os
 
 import functions_framework
@@ -32,46 +31,23 @@ from sendgrid.helpers.mail import Mail, From, To
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 
 
-def _extract_value(field):
-    """Extract a Python value from a Firestore protobuf field."""
-    if "stringValue" in field:
-        return field["stringValue"]
-    if "mapValue" in field:
-        return {
-            k: _extract_value(v)
-            for k, v in field["mapValue"].get("fields", {}).items()
-        }
-    if "arrayValue" in field:
-        return [
-            _extract_value(v)
-            for v in field["arrayValue"].get("values", [])
-        ]
-    if "booleanValue" in field:
-        return field["booleanValue"]
-    if "integerValue" in field:
-        return int(field["integerValue"])
-    if "doubleValue" in field:
-        return field["doubleValue"]
-    if "nullValue" in field:
-        return None
-    return str(field)
-
-
 @functions_framework.cloud_event
 def handle_firestore(cloud_event):
     """Process Firestore document creation and send email via SendGrid."""
-    # Extract document path for status update
+    # Extract document path from the CloudEvent subject
     doc_path = cloud_event["subject"]
     if doc_path.startswith("documents/"):
         doc_path = doc_path[len("documents/"):]
 
-    # Parse fields from Firestore protobuf format
-    # cloud_event.data may arrive as bytes in Cloud Functions 2nd gen
-    data_payload = cloud_event.data
-    if isinstance(data_payload, (bytes, str)):
-        data_payload = json.loads(data_payload)
-    raw_fields = data_payload.get("value", {}).get("fields", {})
-    fields = {k: _extract_value(v) for k, v in raw_fields.items()}
+    # Read the document directly from Firestore instead of parsing
+    # protobuf from cloud_event.data — simpler and works regardless
+    # of how Eventarc serializes the payload (JSON or protobuf bytes).
+    db = firestore.Client()
+    doc = db.document(doc_path).get()
+    if not doc.exists:
+        print(f"SKIP: document {doc_path} not found")
+        return
+    fields = doc.to_dict()
 
     template_id = fields.get("template_id", "")
     subject = fields.get("subject", "")
@@ -94,8 +70,6 @@ def handle_firestore(cloud_event):
     message.to = To(to_email)
     message.template_id = template_id
     message.dynamic_template_data = data
-
-    db = firestore.Client()
 
     try:
         sg = SendGridAPIClient(SENDGRID_API_KEY)

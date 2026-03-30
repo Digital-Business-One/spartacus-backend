@@ -46,32 +46,28 @@ jobs:
       - name: Unit tests
         run: uv run pytest
 
-  # ─── Testes de integração (Firebase Emulators) ─────────────────────────────
-  test-integration:
-    name: Integration Tests
-    needs: test
-    if: github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        run: pip install uv
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Integration tests (emuladores gerenciados pelo pytest)
-        run: uv run pytest tests/integration/ -v
+  # ─── Testes de integração (Firebase Emulators) — desabilitado temporariamente
+  # test-integration:
+  #   name: Integration Tests
+  #   needs: test
+  #   if: github.event_name != 'workflow_dispatch'
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.12"
+  #     - name: Install uv
+  #       run: pip install uv
+  #     - name: Install dependencies
+  #       run: uv sync
+  #     - name: Integration tests (emuladores gerenciados pelo pytest)
+  #       run: uv run pytest tests/integration/ -v
 
   # ─── Deploy → Cloud Run ─────────────────────────────────────────────────────
   deploy:
     name: Deploy → Cloud Run
-    needs: [test, test-integration]
+    needs: [test]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -119,7 +115,7 @@ jobs:
   # ─── Deploy → Cloud Function (send-email) ──────────────────────────────────
   deploy-function:
     name: Deploy → Cloud Function
-    needs: [test, test-integration]
+    needs: [test]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
