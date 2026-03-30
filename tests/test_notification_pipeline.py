@@ -60,7 +60,7 @@ class TestSignupEmailConfirmation:
 
         mock_db.collection.assert_called_with("notifications")
         doc = mock_db.collection.return_value.add.call_args[0][0]
-        assert doc["template_id"] == "TBD_SIGNUP_WELCOME"
+        assert doc["template_id"] == "d-d24c02e9d4134c979ddf583d011e0478"
         assert doc["subject"] == "Confirme seu e-mail — Spartacus"
         assert doc["to"] == "carlos@email.com"
         assert doc["data"]["name"] == "Carlos Eduardo da Silva"
@@ -121,7 +121,7 @@ class TestAccountNotification:
             dispatcher.dispatch(event)
 
         doc = mock_db.collection.return_value.add.call_args[0][0]
-        assert doc["template_id"] == "TBD_ACCOUNT_NOTIFICATION"
+        assert doc["template_id"] == "d-6572d5ac5f4346d892e44adef0b998a4"
         assert doc["data"]["title"] == "Cadastro aprovado!"
         assert doc["data"]["cta_text"] == "Acessar"
 
