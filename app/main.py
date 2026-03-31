@@ -34,6 +34,7 @@ app = FastAPI(title="Spartacus API", version="0.1.0")
 # When CORS_ORIGINS is not set, defaults to no origins allowed.
 _cors_raw = os.getenv("CORS_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+print(f"[CORS] allow_origins={_cors_origins}")
 
 # Starlette applies middlewares in REVERSE add order (last added = outermost).
 # Order of execution: CORS → Logging → Auth → route handler.
