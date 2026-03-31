@@ -13,6 +13,7 @@ from app.routers import (
     auth,
     checkin,
     classes,
+    donations,
     internal,
     medical_history,
     members,
@@ -55,6 +56,7 @@ app.include_router(projects.router)
 app.include_router(members.router)
 app.include_router(checkin.router)
 app.include_router(classes.router)
+app.include_router(donations.router)
 app.include_router(modalities.router)
 app.include_router(auth.router)
 app.include_router(medical_history.router)
