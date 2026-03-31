@@ -10,6 +10,8 @@ from app.models.donation import (
     DonationConfigItem,
     DonationConfigUpdate,
     DonationCreate,
+    DonationHistoryItem,
+    DonationHistoryOut,
     DonationOut,
 )
 
@@ -35,7 +37,7 @@ class DonationService:
             self._assert_guardian(uid, target_uid)
 
         db = firestore.client()
-        month = _current_month()
+        month = data.month or _current_month()
 
         # Check duplicate
         existing = list(
@@ -116,6 +118,112 @@ class DonationService:
             status=data.get("status", "pledged"),
             created_at=data.get("createdAt", ""),
         )
+
+    # ── History ──────────────────────────────────────────────────────
+
+    @log
+    def get_history(
+        self,
+        project_id: str,
+        uid: str,
+        acting_as: str | None = None,
+    ) -> DonationHistoryOut:
+        target_uid = acting_as or uid
+        if acting_as:
+            self._assert_guardian(uid, target_uid)
+
+        db = firestore.client()
+
+        results = list(
+            db.collection(self._DOACOES)
+            .where("projectId", "==", project_id)
+            .where("userId", "==", target_uid)
+            .order_by("month", direction=firestore.Query.DESCENDING)
+            .stream()
+        )
+
+        # Index donations by month key
+        by_month: dict[str, tuple] = {}
+        for doc in results:
+            data = doc.to_dict()
+            month_str = data.get("month", "")
+            by_month[month_str] = (doc.id, data)
+
+        # Build list for last 6 months, filling gaps as "pending"
+        now = datetime.now(timezone.utc)
+        items: list[DonationHistoryItem] = []
+
+        y, m = now.year, now.month
+        for _ in range(6):
+            key = f"{y}-{m:02d}"
+            month_label = self._format_month_label(key)
+
+            if key in by_month:
+                doc_id, data = by_month[key]
+                item_code = data.get("item", "")
+                status = data.get("status", "pledged")
+                created_at = data.get("createdAt", "")
+                created_label = self._format_created_date(created_at)
+                status_label = (
+                    "Entregue" if status == "received" else "Pendente"
+                )
+                items.append(DonationHistoryItem(
+                    id=doc_id,
+                    month=key,
+                    month_label=month_label,
+                    item_label=ITEM_LABELS.get(item_code, item_code),
+                    status=status,
+                    status_label=status_label,
+                    created_at=created_label,
+                ))
+            else:
+                items.append(DonationHistoryItem(
+                    id=f"pending_{key}",
+                    month=key,
+                    month_label=month_label,
+                    item_label="",
+                    status="pending",
+                    status_label="Pendente",
+                    created_at="Ainda não registrado",
+                ))
+
+            m -= 1
+            if m == 0:
+                m = 12
+                y -= 1
+
+        return DonationHistoryOut(donations=items)
+
+    @staticmethod
+    def _format_month_label(month_str: str) -> str:
+        """Convert '2026-03' to 'MARÇO / 2026'."""
+        month_names = {
+            1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL",
+            5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO",
+            9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO",
+            12: "DEZEMBRO",
+        }
+        try:
+            parts = month_str.split("-")
+            y, m = int(parts[0]), int(parts[1])
+            return f"{month_names.get(m, '')} / {y}"
+        except (ValueError, IndexError):
+            return month_str
+
+    @staticmethod
+    def _format_created_date(iso_str: str) -> str:
+        """Convert ISO date to '15 de Março, 2026'."""
+        month_names = {
+            1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+            5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+            9: "Setembro", 10: "Outubro", 11: "Novembro",
+            12: "Dezembro",
+        }
+        try:
+            dt = datetime.fromisoformat(iso_str)
+            return f"{dt.day} de {month_names.get(dt.month, '')}, {dt.year}"
+        except (ValueError, TypeError):
+            return iso_str
 
     # ── Donation config ──────────────────────────────────────────────
 

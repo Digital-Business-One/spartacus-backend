@@ -23,6 +23,7 @@ class DonationCreate(BaseModel):
 
     item: DonationItem
     item_description: Optional[str] = None
+    month: Optional[str] = None  # "2026-03" — defaults to current month
 
     @model_validator(mode="after")
     def desc_required_for_other(self) -> "DonationCreate":
@@ -45,6 +46,28 @@ class DonationOut(BaseModel):
     month: str              # "2026-03"
     status: str             # pledged | received
     created_at: str
+
+
+class DonationHistoryItem(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel,
+    )
+
+    id: str
+    month: str              # "2026-03"
+    month_label: str        # "MARÇO / 2026"
+    item_label: str         # "1 pacote de café"
+    status: str             # "pledged" | "received"
+    status_label: str       # "Entregue" | "Pendente"
+    created_at: str         # "15 de Março, 2026"
+
+
+class DonationHistoryOut(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel,
+    )
+
+    donations: list[DonationHistoryItem]
 
 
 class DonationConfigItem(BaseModel):
