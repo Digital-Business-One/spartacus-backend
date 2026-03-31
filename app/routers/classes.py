@@ -1,4 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Header, HTTPException
+from firebase_admin import firestore
 
 from app.logging.decorator import log
 from app.models.classes import ClassCreate, ClassesResponse, ClassOut, ClassUpdate
@@ -13,6 +16,22 @@ def _assert_project(project_id: str) -> None:
     ctx = auth_ctx.get()
     if ctx.project_id != project_id:
         raise HTTPException(status_code=403, detail="Acesso negado ao projeto")
+
+
+@log
+@router.get("/{project_id}/my-classes")
+def get_my_classes(
+    project_id: str,
+    x_acting_as: Optional[str] = Header(None),
+) -> dict:
+    ctx = auth_ctx.get()
+    target_uid = x_acting_as or ctx.user_id
+    db = firestore.client()
+    user_doc = db.collection("users").document(target_uid).get()
+    class_ids = user_doc.to_dict().get("classIds", []) if user_doc.exists else []
+    return {
+        "enrollments": [{"class_id": cid} for cid in class_ids],
+    }
 
 
 @log
