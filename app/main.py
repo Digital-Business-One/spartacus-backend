@@ -29,8 +29,9 @@ configure_logging()
 
 app = FastAPI(title="Spartacus API", version="0.1.0")
 
-# CORS — In development, allow all origins. In production, use explicit list.
-_is_dev = os.getenv("APP_ENV") == "development"
+# CORS — configured via CORS_ORIGINS env var (comma-separated).
+# Use "*" in CORS_ORIGINS to allow all origins in development.
+# When CORS_ORIGINS is not set, defaults to no origins allowed.
 _cors_raw = os.getenv("CORS_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 
@@ -40,7 +41,7 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if _is_dev else _cors_origins,
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
