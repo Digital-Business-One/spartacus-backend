@@ -4,7 +4,13 @@ from typing import Optional
 from firebase_admin import firestore
 
 from app.logging.decorator import log
-from app.models.classes import AgeRange, ClassCreate, ClassOut, ClassUpdate
+from app.models.classes import (
+    AgeRange,
+    ClassCreate,
+    ClassOut,
+    ClassUpdate,
+    ScheduleItem,
+)
 
 _DAY_LABELS: dict[str, str] = {
     "mon": "Seg",
@@ -17,23 +23,96 @@ _DAY_LABELS: dict[str, str] = {
 }
 
 
-def _format_schedule(weekly_schedule: dict) -> str:
-    days = "/".join(_DAY_LABELS.get(d, d) for d in weekly_schedule.get("days", []))
-    start = weekly_schedule.get("startTime", "")
-    end = weekly_schedule.get("endTime", "")
-    return f"{days} {start}–{end}"
+def _format_schedule(schedule: list[dict]) -> str:
+    """Build human-readable schedule from array of schedule items."""
+    if not schedule:
+        return ""
+
+    # Group by time range to collapse days
+    groups: dict[str, list[str]] = {}
+    for item in schedule:
+        key = f"{item.get('startTime', '')}–{item.get('endTime', '')}"
+        day = _DAY_LABELS.get(item.get("day", ""), item.get("day", ""))
+        groups.setdefault(key, []).append(day)
+
+    parts = []
+    for time_range, days in groups.items():
+        parts.append(f"{'/'.join(days)} {time_range}")
+    return " | ".join(parts)
 
 
-def _doc_to_class_out(doc) -> ClassOut:
+def _parse_schedule(raw: list | dict | None) -> list[dict]:
+    """Normalize schedule from Firestore (supports old and new format)."""
+    if raw is None:
+        return []
+    # New format: list of {day, startTime, endTime}
+    if isinstance(raw, list):
+        return raw
+    # Old format: {days: [...], startTime, endTime}
+    if isinstance(raw, dict) and "days" in raw:
+        return [
+            {
+                "day": d,
+                "startTime": raw.get("startTime", ""),
+                "endTime": raw.get("endTime", ""),
+            }
+            for d in raw["days"]
+        ]
+    return []
+
+
+def _resolve_modality_names(
+    db, modality_ids: set[str]
+) -> dict[str, str]:
+    """Batch-resolve modality IDs to names."""
+    if not modality_ids:
+        return {}
+    refs = [
+        db.collection("modalities").document(mid)
+        for mid in modality_ids
+    ]
+    docs = db.get_all(refs)
+    return {
+        doc.id: doc.to_dict().get("name", doc.id)
+        for doc in docs
+        if doc.exists
+    }
+
+
+def _doc_to_class_out(
+    doc, modality_names: dict[str, str]
+) -> ClassOut:
     data = doc.to_dict()
     age_range_data = data.get("ageRange")
     age_range = AgeRange(**age_range_data) if age_range_data else None
+
+    schedule_raw = _parse_schedule(
+        data.get("schedule") or data.get("weeklySchedule")
+    )
+
+    modality_id = data.get("modalityId", "")
+    modality_name = modality_names.get(
+        modality_id, data.get("modality", "")
+    )
+
+    schedule_items = [
+        ScheduleItem(
+            day=s.get("day", ""),
+            start_time=s.get("startTime", ""),
+            end_time=s.get("endTime", ""),
+        )
+        for s in schedule_raw
+    ]
+
     return ClassOut(
         id=doc.id,
         name=data["name"],
-        modality=data["modality"],
-        schedule=_format_schedule(data.get("weeklySchedule", {})),
+        modality_id=modality_id,
+        modality_name=modality_name,
+        schedule=_format_schedule(schedule_raw),
+        schedule_items=schedule_items,
         teacher=data.get("teacherName"),
+        location=data.get("location"),
         age_range=age_range,
         icon_url=data.get("iconUrl"),
     )
@@ -45,42 +124,69 @@ class ClassService:
     @log
     def list_by_project(self, project_id: str) -> list[ClassOut]:
         db = firestore.client()
-        docs = (
+        docs = list(
             db.collection(self._COLLECTION)
             .where("projectId", "==", project_id)
             .where("active", "==", True)
             .stream()
         )
-        return [_doc_to_class_out(doc) for doc in docs]
+
+        modality_ids = {
+            d.to_dict().get("modalityId", "")
+            for d in docs
+            if d.to_dict().get("modalityId")
+        }
+        modality_names = _resolve_modality_names(db, modality_ids)
+
+        return [_doc_to_class_out(doc, modality_names) for doc in docs]
 
     @log
     def create(self, project_id: str, data: ClassCreate) -> ClassOut:
         db = firestore.client()
         doc_id = f"{project_id}_{data.id}"
         now = datetime.now(timezone.utc).isoformat()
+
+        schedule_raw = [
+            {
+                "day": s.day,
+                "startTime": s.start_time,
+                "endTime": s.end_time,
+            }
+            for s in data.schedule
+        ]
+
         doc_data = {
             "projectId": project_id,
             "name": data.name,
-            "modality": data.modality,
-            "weeklySchedule": {
-                "days": data.weekly_schedule.days,
-                "startTime": data.weekly_schedule.start_time,
-                "endTime": data.weekly_schedule.end_time,
-            },
+            "modalityId": data.modality_id,
+            "schedule": schedule_raw,
             "teacherId": data.teacher_id,
             "teacherName": data.teacher_name,
-            "ageRange": data.age_range.model_dump() if data.age_range else None,
+            "location": data.location,
+            "ageRange": (
+                data.age_range.model_dump() if data.age_range else None
+            ),
             "iconUrl": None,
             "active": True,
             "createdAt": now,
         }
         db.collection(self._COLLECTION).document(doc_id).set(doc_data)
+
+        modality_names = _resolve_modality_names(
+            db, {data.modality_id}
+        )
+
         return ClassOut(
             id=doc_id,
             name=data.name,
-            modality=data.modality,
-            schedule=_format_schedule(doc_data["weeklySchedule"]),
+            modality_id=data.modality_id,
+            modality_name=modality_names.get(
+                data.modality_id, ""
+            ),
+            schedule=_format_schedule(schedule_raw),
+            schedule_items=data.schedule,
             teacher=data.teacher_name,
+            location=data.location,
             age_range=data.age_range,
         )
 
@@ -97,18 +203,23 @@ class ClassService:
         updates: dict = {}
         if data.name is not None:
             updates["name"] = data.name
-        if data.modality is not None:
-            updates["modality"] = data.modality
-        if data.weekly_schedule is not None:
-            updates["weeklySchedule"] = {
-                "days": data.weekly_schedule.days,
-                "startTime": data.weekly_schedule.start_time,
-                "endTime": data.weekly_schedule.end_time,
-            }
+        if data.modality_id is not None:
+            updates["modalityId"] = data.modality_id
+        if data.schedule is not None:
+            updates["schedule"] = [
+                {
+                    "day": s.day,
+                    "startTime": s.start_time,
+                    "endTime": s.end_time,
+                }
+                for s in data.schedule
+            ]
         if data.teacher_id is not None:
             updates["teacherId"] = data.teacher_id
         if data.teacher_name is not None:
             updates["teacherName"] = data.teacher_name
+        if data.location is not None:
+            updates["location"] = data.location
         if data.age_range is not None:
             updates["ageRange"] = data.age_range.model_dump()
 
@@ -116,7 +227,12 @@ class ClassService:
             doc_ref.update(updates)
 
         updated_doc = doc_ref.get()
-        return _doc_to_class_out(updated_doc)
+        updated_data = updated_doc.to_dict()
+        mid = updated_data.get("modalityId", "")
+        modality_names = _resolve_modality_names(
+            db, {mid} if mid else set()
+        )
+        return _doc_to_class_out(updated_doc, modality_names)
 
     @log
     def deactivate(self, project_id: str, class_id: str) -> bool:

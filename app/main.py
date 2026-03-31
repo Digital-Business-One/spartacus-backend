@@ -11,10 +11,14 @@ from app.models.project import MyProjectOut
 from app.routers import (
     accounts,
     auth,
+    checkin,
     classes,
+    donations,
+    events,
     internal,
     medical_history,
     members,
+    modalities,
     profile,
     projects,
 )
@@ -28,11 +32,12 @@ configure_logging()
 
 app = FastAPI(title="Spartacus API", version="0.1.0")
 
-# CORS — origins configurable via env var (comma-separated).
-# In development (APP_ENV=development), allow all origins when CORS_ORIGINS is not set.
+# CORS — configured via CORS_ORIGINS env var (comma-separated).
+# Use "*" in CORS_ORIGINS to allow all origins in development.
+# When CORS_ORIGINS is not set, defaults to no origins allowed.
 _cors_raw = os.getenv("CORS_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
-_is_dev = os.getenv("APP_ENV") == "development"
+print(f"[CORS] allow_origins={_cors_origins}")
 
 # Starlette applies middlewares in REVERSE add order (last added = outermost).
 # Order of execution: CORS → Logging → Auth → route handler.
@@ -40,7 +45,7 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins if _cors_origins else (["*"] if _is_dev else []),
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -50,7 +55,11 @@ app.include_router(internal.router)
 app.include_router(accounts.router)
 app.include_router(projects.router)
 app.include_router(members.router)
+app.include_router(checkin.router)
 app.include_router(classes.router)
+app.include_router(donations.router)
+app.include_router(events.router)
+app.include_router(modalities.router)
 app.include_router(auth.router)
 app.include_router(medical_history.router)
 app.include_router(profile.router)
