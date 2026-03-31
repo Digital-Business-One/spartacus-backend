@@ -14,6 +14,7 @@ on:
         type: choice
         options:
           - root_project
+          - modalities
           - classes
           - admin_account
           - all
@@ -216,8 +217,15 @@ jobs:
           FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_PROJECT_ID }}.firebasestorage.app
         run: uv run python seeds/seed_root_project.py
 
-      - name: Seed classes
-        if: inputs.seed == 'classes' || inputs.seed == 'all'
+      - name: Seed modalities + classes (migration)
+        if: inputs.seed == 'modalities' || inputs.seed == 'all'
+        env:
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
+          ROOT_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: uv run python seeds/seed_modalities_and_classes.py
+
+      - name: Seed classes (legacy)
+        if: inputs.seed == 'classes'
         env:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
           ROOT_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
