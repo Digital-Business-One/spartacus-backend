@@ -12,6 +12,10 @@ _BEARER_PREFIX = "Bearer "
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
+        # Let CORS preflight pass through — CORSMiddleware handles it
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         if is_public(request):
             return await call_next(request)
 
