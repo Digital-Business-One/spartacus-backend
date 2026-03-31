@@ -11,6 +11,7 @@ from app.models.project import MyProjectOut
 from app.routers import (
     accounts,
     auth,
+    checkin,
     classes,
     internal,
     medical_history,
@@ -52,6 +53,7 @@ app.include_router(internal.router)
 app.include_router(accounts.router)
 app.include_router(projects.router)
 app.include_router(members.router)
+app.include_router(checkin.router)
 app.include_router(classes.router)
 app.include_router(modalities.router)
 app.include_router(auth.router)
