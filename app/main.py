@@ -29,11 +29,10 @@ configure_logging()
 
 app = FastAPI(title="Spartacus API", version="0.1.0")
 
-# CORS — origins configurable via env var (comma-separated).
-# In development (APP_ENV=development), allow all origins when CORS_ORIGINS is not set.
+# CORS — In development, allow all origins. In production, use explicit list.
+_is_dev = os.getenv("APP_ENV") == "development"
 _cors_raw = os.getenv("CORS_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
-_is_dev = os.getenv("APP_ENV") == "development"
 
 # Starlette applies middlewares in REVERSE add order (last added = outermost).
 # Order of execution: CORS → Logging → Auth → route handler.
@@ -41,7 +40,7 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins if _cors_origins else (["*"] if _is_dev else []),
+    allow_origins=["*"] if _is_dev else _cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
