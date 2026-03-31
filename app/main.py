@@ -10,6 +10,7 @@ from app.logging.middleware import LoggingMiddleware
 from app.models.project import MyProjectOut
 from app.routers import (
     accounts,
+    attendance,
     auth,
     checkin,
     classes,
@@ -55,6 +56,7 @@ app.include_router(internal.router)
 app.include_router(accounts.router)
 app.include_router(projects.router)
 app.include_router(members.router)
+app.include_router(attendance.router)
 app.include_router(checkin.router)
 app.include_router(classes.router)
 app.include_router(donations.router)

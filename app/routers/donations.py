@@ -7,6 +7,7 @@ from app.models.donation import (
     DonationConfig,
     DonationConfigUpdate,
     DonationCreate,
+    DonationHistoryOut,
     DonationOut,
 )
 from app.security.context import auth_ctx
@@ -48,6 +49,19 @@ def get_current_donation(
             detail="Nenhuma doação registrada este mês",
         )
     return result
+
+
+@log
+@router.get("/donations/history")
+def get_donation_history(
+    x_acting_as: Optional[str] = Header(None),
+) -> DonationHistoryOut:
+    ctx = auth_ctx.get()
+    return DonationService().get_history(
+        project_id=ctx.project_id,
+        uid=ctx.user_id,
+        acting_as=x_acting_as,
+    )
 
 
 @log
