@@ -70,6 +70,7 @@ class DonationHistoryOut(BaseModel):
     donations: list[DonationHistoryItem]
 
 
+
 class DonationConfigItem(BaseModel):
     code: str
     label: str
