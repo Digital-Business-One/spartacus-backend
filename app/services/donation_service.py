@@ -138,7 +138,6 @@ class DonationService:
             db.collection(self._DOACOES)
             .where("projectId", "==", project_id)
             .where("userId", "==", target_uid)
-            .order_by("month", direction=firestore.Query.DESCENDING)
             .stream()
         )
 
