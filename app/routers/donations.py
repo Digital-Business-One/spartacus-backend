@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
 
+from app.events import publisher
 from app.logging.decorator import log
 from app.models.donation import (
     DonationConfig,
@@ -24,12 +25,16 @@ def create_donation(
     x_acting_as: Optional[str] = Header(None),
 ) -> DonationOut:
     ctx = auth_ctx.get()
-    return DonationService().create(
+    result, event = DonationService().create(
         project_id=ctx.project_id,
         uid=ctx.user_id,
         acting_as=x_acting_as,
         data=data,
     )
+    publisher.publish(
+        event, project_id=ctx.project_id, source="donation_service",
+    )
+    return result
 
 
 @log

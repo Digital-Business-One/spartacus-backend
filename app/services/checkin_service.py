@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from firebase_admin import firestore
 
+from app.events.models import CheckinRegisteredPayload, DomainEvent
 from app.logging.decorator import log
 from app.models.checkin import (
     AvailableCheckinOut,
@@ -196,23 +197,54 @@ class CheckinService:
 
         # Create presenca
         now_iso = datetime.now(timezone.utc).isoformat()
+        turma_id = aula_data.get("turmaId", "")
         presenca_data = {
             "projectId": project_id,
             "userId": target_uid,
             "actingAs": acting_as,
             "aulaId": aula_id,
-            "turmaId": aula_data.get("turmaId", ""),
+            "turmaId": turma_id,
             "timestamp": now_iso,
             "status": "REGISTERED",
         }
 
         _, ref = db.collection(self._PRESENCAS).add(presenca_data)
 
+        # Resolve names for event payload
+        user_doc = db.collection(self._USERS).document(target_uid).get()
+        user_name = ""
+        if user_doc.exists:
+            user_name = user_doc.to_dict().get("name", "")
+
+        turma_doc = db.collection(self._CLASSES).document(turma_id).get()
+        turma_name = ""
+        modality_name = ""
+        if turma_doc.exists:
+            td = turma_doc.to_dict()
+            turma_name = td.get("name", "")
+            modality_name = self._resolve_modality(db, td)
+
+        event = DomainEvent(
+            id="checkin.registered",
+            payload=CheckinRegisteredPayload(
+                entity_id=ref.id,
+                source_entity_ref=f"presencas/{ref.id}",
+                source_entity_type="presencas",
+                target_uid=target_uid,
+                target_name=user_name,
+                author_uid=uid,
+                author_name=user_name,
+                turma_name=turma_name,
+                modalidade_name=modality_name,
+                class_date=now.strftime("%d/%m/%Y %H:%M"),
+            ),
+        )
+
         return CheckinResponse(
             presenca_id=ref.id,
             status="REGISTERED",
             timestamp=now_iso,
-        )
+        ), event
 
     # ── Helpers ──────────────────────────────────────────────────────
 
