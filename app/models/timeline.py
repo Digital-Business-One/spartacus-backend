@@ -1,0 +1,69 @@
+"""Pydantic schemas for timeline feed (RFC-11)."""
+
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
+
+
+class TimelineEntryOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    id: str
+    project_id: str
+    type: str
+    origin: str
+    visibility: str
+
+    author_uid: str
+    author_name: str
+    author_roles: list[str] = []
+
+    target_uid: Optional[str] = None
+    target_name: Optional[str] = None
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    attachments: Optional[list[dict]] = None
+    link_preview: Optional[dict] = None
+
+    event_date: Optional[str] = None
+    event_location: Optional[str] = None
+
+    validation_status: Optional[str] = None
+    validated_by: Optional[str] = None
+    validated_at: Optional[str] = None
+
+    review_requested: bool = False
+    review_resolved: bool = False
+
+    likes_count: int = 0
+    user_liked: bool = False  # resolved per-request
+
+    turma_name: Optional[str] = None
+    modalidade_name: Optional[str] = None
+    class_date: Optional[str] = None
+    donation_amount: Optional[str] = None
+
+    created_at: str
+    updated_at: Optional[str] = None
+
+
+class TimelineFeedResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    entries: list[TimelineEntryOut]
+    next_cursor: Optional[str] = None
+
+
+class ValidateRequest(BaseModel):
+    status: str  # "confirmed" | "absent"
+
+
+class LinkPreviewResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    url: str
+    title: str = ""
+    image: str = ""
+    description: str = ""

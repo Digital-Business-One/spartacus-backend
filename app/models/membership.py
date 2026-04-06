@@ -5,7 +5,7 @@ from pydantic import BaseModel
 VALID_STATUSES: frozenset[str] = frozenset({"pending", "active", "suspended"})
 VALID_ROLES: frozenset[str] = frozenset(
     {"owner", "assistant", "teacher", "instructor", "guardian", "student",
-     "supporter", "sponsor"}
+     "supporter", "sponsor", "social"}
 )
 
 

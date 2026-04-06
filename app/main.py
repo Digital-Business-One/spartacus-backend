@@ -17,11 +17,15 @@ from app.routers import (
     donations,
     events,
     internal,
+    jobs,
     medical_history,
     members,
     modalities,
+    posts,
     profile,
     projects,
+    timeline,
+    validation,
 )
 from app.security.context import auth_ctx
 from app.security.decorator import public, register_public_routes
@@ -65,6 +69,10 @@ app.include_router(modalities.router)
 app.include_router(auth.router)
 app.include_router(medical_history.router)
 app.include_router(profile.router)
+app.include_router(posts.router)
+app.include_router(timeline.router)
+app.include_router(validation.router)
+app.include_router(jobs.router)
 
 # Firebase Admin SDK — uses Application Default Credentials on Cloud Run.
 # In local dev, uses FIREBASE_AUTH_EMULATOR_HOST if set.
