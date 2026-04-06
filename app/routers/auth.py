@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
 
+from app.events import publisher
 from app.logging.decorator import log
 from app.models.auth import (
     CheckEmailResponse,
@@ -11,7 +12,6 @@ from app.models.auth import (
     SignupRequest,
     SignupResponse,
 )
-from app.notifications import dispatcher
 from app.security.context import auth_ctx
 from app.security.decorator import public
 from app.security.firebase import verify_id_token
@@ -51,7 +51,7 @@ def signup(
             raise HTTPException(status_code=401, detail="Token inválido")
 
     event = AuthService().signup(x_project_id, data, google_uid)
-    dispatcher.dispatch(event)
+    publisher.publish(event, project_id=x_project_id, source="auth_service")
     return SignupResponse(
         uid=event.payload.uid,
         status=event.payload.status,
@@ -80,7 +80,7 @@ def email_verified(
     ctx = auth_ctx.get()
     event = AuthService().confirm_email_verified(ctx.user_id, ctx.user_email)
     if event:
-        dispatcher.dispatch(event)
+        publisher.publish(event, project_id=x_project_id, source="auth_service")
     return EmailVerifiedResponse(status="pending_approval")
 
 
@@ -89,8 +89,11 @@ def email_verified(
 @public
 def resend_verification(
     data: ResendVerificationRequest,
+    x_project_id: str = Header(...),
 ) -> EmailVerifiedResponse:
     event = AuthService().resend_verification(data)
     if event:
-        dispatcher.dispatch(event)
+        publisher.publish(
+            event, project_id=x_project_id, source="auth_service"
+        )
     return EmailVerifiedResponse(status="ok")

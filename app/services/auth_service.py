@@ -3,14 +3,14 @@ from datetime import date, datetime, timezone
 from fastapi import HTTPException
 from firebase_admin import auth, firestore
 
-from app.logging.decorator import log
-from app.models.auth import ResendVerificationRequest, SignupRequest
-from app.notifications.models import (
+from app.events.models import (
     AccountNotificationPayload,
     DomainEvent,
     ResendVerificationPayload,
     SignupEmailPayload,
 )
+from app.logging.decorator import log
+from app.models.auth import ResendVerificationRequest, SignupRequest
 
 _ROLES_PT = {
     "student": "Aluno",

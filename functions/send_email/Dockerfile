@@ -9,4 +9,4 @@ COPY main.py .
 
 EXPOSE 8081
 
-CMD ["functions-framework", "--target=handle_firestore", "--signature-type=cloudevent", "--port=8081"]
+CMD ["functions-framework", "--target=send_email", "--port=8081"]

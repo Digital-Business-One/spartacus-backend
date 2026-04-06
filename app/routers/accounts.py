@@ -2,9 +2,9 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.events import publisher
 from app.logging.decorator import log
 from app.models.account import AccountOut, TransitionRequest, TransitionResponse
-from app.notifications import dispatcher
 from app.security.context import auth_ctx
 from app.security.decorator import require_roles
 from app.services.account_service import AccountService
@@ -53,5 +53,7 @@ def execute_transition(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     if event:
-        dispatcher.dispatch(event)
+        publisher.publish(
+            event, project_id=ctx.project_id, source="account_service"
+        )
     return result

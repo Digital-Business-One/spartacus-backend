@@ -72,7 +72,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
-      function: ${{ steps.filter.outputs.function }}
+      fn_send_email: ${{ steps.filter.outputs.fn_send_email }}
+      fn_orchestrator: ${{ steps.filter.outputs.fn_orchestrator }}
+      fn_send_push: ${{ steps.filter.outputs.fn_send_push }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,11 +90,23 @@ jobs:
           else
             echo "backend=false" >> "$GITHUB_OUTPUT"
           fi
-          # function = anything inside functions/
-          if echo "$CHANGED" | grep -qE '^functions/'; then
-            echo "function=true" >> "$GITHUB_OUTPUT"
+          # fn_send_email = changes inside functions/send_email/
+          if echo "$CHANGED" | grep -qE '^functions/send_email/'; then
+            echo "fn_send_email=true" >> "$GITHUB_OUTPUT"
           else
-            echo "function=false" >> "$GITHUB_OUTPUT"
+            echo "fn_send_email=false" >> "$GITHUB_OUTPUT"
+          fi
+          # fn_orchestrator = changes inside functions/orchestrator/
+          if echo "$CHANGED" | grep -qE '^functions/orchestrator/'; then
+            echo "fn_orchestrator=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fn_orchestrator=false" >> "$GITHUB_OUTPUT"
+          fi
+          # fn_send_push = changes inside functions/send_push/
+          if echo "$CHANGED" | grep -qE '^functions/send_push/'; then
+            echo "fn_send_push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fn_send_push=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ─── Deploy → Cloud Run ─────────────────────────────────────────────────────
@@ -143,11 +157,11 @@ jobs:
             --platform=managed \
             --quiet
 
-  # ─── Deploy → Cloud Function (send-email) ──────────────────────────────────
-  deploy-function:
-    name: Deploy → Cloud Function
+  # ─── Deploy → Cloud Function: send-email ─────────────────────────────────────
+  deploy-fn-send-email:
+    name: Deploy → send-email
     needs: [test, changes]
-    if: github.event_name == 'push' && needs.changes.outputs.function == 'true'
+    if: github.event_name == 'push' && needs.changes.outputs.fn_send_email == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -171,13 +185,89 @@ jobs:
             --runtime python312 \
             --region ${{ env.REGION }} \
             --source ./functions/send_email \
-            --entry-point handle_firestore \
+            --entry-point send_email \
             --trigger-event-filters="type=google.cloud.firestore.document.v1.created" \
             --trigger-event-filters="database=(default)" \
             --trigger-event-filters-path-pattern="document=notifications/{docId}" \
             --trigger-location=${{ env.REGION }} \
             --service-account fn-send-email@${{ secrets.FIREBASE_PROJECT_ID }}.iam.gserviceaccount.com \
             --set-secrets SENDGRID_API_KEY=SENDGRID_API_KEY:latest \
+            --memory 256Mi \
+            --timeout 30s \
+            --quiet
+
+  # ─── Deploy → Cloud Function: event-orchestrator ────────────────────────────
+  deploy-fn-orchestrator:
+    name: Deploy → event-orchestrator
+    needs: [test, changes]
+    if: github.event_name == 'push' && needs.changes.outputs.fn_orchestrator == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticar no GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Cloud Function event-orchestrator
+        run: |
+          gcloud functions deploy event-orchestrator \
+            --gen2 \
+            --runtime python312 \
+            --region ${{ env.REGION }} \
+            --source ./functions/orchestrator \
+            --entry-point event_orchestrator \
+            --trigger-event-filters="type=google.cloud.firestore.document.v1.created" \
+            --trigger-event-filters="database=(default)" \
+            --trigger-event-filters-path-pattern="document=events/{docId}" \
+            --trigger-location=${{ env.REGION }} \
+            --service-account fn-send-email@${{ secrets.FIREBASE_PROJECT_ID }}.iam.gserviceaccount.com \
+            --memory 256Mi \
+            --timeout 30s \
+            --quiet
+
+  # ─── Deploy → Cloud Function: send-push (RFC-11) ──────────────────────────
+  deploy-fn-send-push:
+    name: Deploy → send-push
+    needs: [test, changes]
+    if: github.event_name == 'push' && needs.changes.outputs.fn_send_push == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticar no GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Cloud Function send-push
+        run: |
+          gcloud functions deploy send-push \
+            --gen2 \
+            --runtime python312 \
+            --region ${{ env.REGION }} \
+            --source ./functions/send_push \
+            --entry-point send_push \
+            --trigger-event-filters="type=google.cloud.firestore.document.v1.created" \
+            --trigger-event-filters="database=(default)" \
+            --trigger-event-filters-path-pattern="document=push_queue/{docId}" \
+            --trigger-location=${{ env.REGION }} \
+            --service-account fn-send-email@${{ secrets.FIREBASE_PROJECT_ID }}.iam.gserviceaccount.com \
             --memory 256Mi \
             --timeout 30s \
             --quiet

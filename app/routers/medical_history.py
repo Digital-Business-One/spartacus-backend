@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException
 
+from app.events import publisher
 from app.logging.decorator import log
 from app.models.medical_history import MedicalHistoryOut, MedicalHistoryRequest
-from app.notifications import dispatcher
 from app.security.context import ADMIN_ROLES, auth_ctx
 from app.services.medical_history_service import MedicalHistoryService
 
@@ -28,7 +28,11 @@ def submit_medical_history(body: MedicalHistoryRequest) -> MedicalHistoryOut:
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     if event:
-        dispatcher.dispatch(event)
+        publisher.publish(
+            event,
+            project_id=ctx.project_id,
+            source="medical_history_service",
+        )
     return result
 
 
