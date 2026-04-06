@@ -442,10 +442,26 @@ class ProfileService:
         total = 0
         filled = 0
 
+        # Name (required for all)
+        total += 1
+        if user.get("name"):
+            filled += 1
+
         # Personal data (required for all)
         total += 1
-        if user.get("name") and user.get("birthDate") and user.get("gender"):
+        if user.get("birthDate") and user.get("gender"):
             filled += 1
+
+        # Photo (optional but counts toward completion)
+        total += 1
+        if user.get("photoUrl"):
+            filled += 1
+
+        # Contact (required for non-dependent users)
+        if not user.get("isDependent"):
+            total += 1
+            if user.get("phone") or user.get("whatsapp"):
+                filled += 1
 
         # Address (required for non-dependent users)
         if not user.get("isDependent"):

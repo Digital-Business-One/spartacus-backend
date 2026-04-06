@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from firebase_admin import firestore
 
+from app.events.models import DomainEvent, DonationRegisteredPayload
 from app.logging.decorator import log
 from app.models.donation import (
     ITEM_LABELS,
@@ -70,15 +71,40 @@ class DonationService:
 
         _, ref = db.collection(self._DOACOES).add(doc_data)
 
+        # Resolve user name for event payload
+        user_doc = db.collection("users").document(target_uid).get()
+        user_name = ""
+        if user_doc.exists:
+            user_name = user_doc.to_dict().get("name", "")
+
+        item_label = ITEM_LABELS.get(data.item, data.item)
+        desc = data.item_description or ""
+        amount = f"{item_label}: {desc}" if desc else item_label
+
+        event = DomainEvent(
+            id="donation.registered",
+            payload=DonationRegisteredPayload(
+                entity_id=ref.id,
+                source_entity_ref=f"doacoes/{ref.id}",
+                source_entity_type="doacoes",
+                target_uid=target_uid,
+                target_name=user_name,
+                author_uid=uid,
+                author_name=user_name,
+                donation_amount=amount,
+                donation_date=month,
+            ),
+        )
+
         return DonationOut(
             id=ref.id,
             item=data.item,
-            item_label=ITEM_LABELS.get(data.item, data.item),
+            item_label=item_label,
             item_description=data.item_description,
             month=month,
             status="pledged",
             created_at=now,
-        )
+        ), event
 
     @log
     def get_current(
