@@ -3,6 +3,7 @@ from typing import Optional
 
 from firebase_admin import firestore
 
+from app.events.models import DomainEvent
 from app.logging.decorator import log
 from app.models.medical_history import (
     DailyActivitiesIn,
@@ -12,7 +13,6 @@ from app.models.medical_history import (
     MedicalHistoryRequest,
     SymptomsIn,
 )
-from app.notifications.models import DomainEvent
 from app.services.account_service import AccountService
 
 

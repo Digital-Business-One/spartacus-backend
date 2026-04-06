@@ -7,6 +7,7 @@ from app.domain.account_states import (
     find_transition,
     get_available_actions,
 )
+from app.events.models import DomainEvent
 from app.logging.decorator import log
 from app.models.account import (
     AccountAction,
@@ -14,7 +15,6 @@ from app.models.account import (
     AddressOut,
     TransitionResponse,
 )
-from app.notifications.models import DomainEvent
 
 
 class AccountService:
@@ -378,7 +378,7 @@ class AccountService:
         if not config:
             return None
 
-        from app.notifications.models import AccountNotificationPayload
+        from app.events.models import AccountNotificationPayload
 
         return DomainEvent(
             id=f"account.{action}",

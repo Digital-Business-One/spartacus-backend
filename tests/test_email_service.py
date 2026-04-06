@@ -9,34 +9,38 @@ with patch("firebase_admin.initialize_app"):
 client = TestClient(app)
 
 
-class TestNotificationAdapter:
-    def test_send_writes_to_notifications_collection(self):
+class TestFirestoreEventStore:
+    def test_publish_writes_to_events_collection(self):
         mock_db = MagicMock()
         os.environ["FIRESTORE_EMULATOR_HOST"] = "localhost:8080"
         with patch(
-            "app.notifications.adapters.firestore_mail.firestore"
+            "app.events.adapters.firestore.firestore"
         ) as mock_fs:
             mock_fs.client.return_value = mock_db
 
-            from app.notifications.adapters.firestore_mail import (
-                NotificationAdapter,
+            from app.events.adapters.firestore import FirestoreEventStore
+            from app.events.models import DomainEvent, AccountNotificationPayload
+
+            event = DomainEvent(
+                id="test.event",
+                payload=AccountNotificationPayload(
+                    to="destino@example.com",
+                    name="Test",
+                    title="Titulo",
+                    message="Mensagem",
+                ),
+            )
+            FirestoreEventStore().publish(
+                event, project_id="test-project", source="test_service"
             )
 
-            NotificationAdapter().send(
-                event_id="test.event",
-                template_id="tmpl-123",
-                subject="Assunto teste",
-                to="destino@example.com",
-                data={"name": "Test"},
-            )
-
-            mock_db.collection.assert_called_once_with("notifications")
+            mock_db.collection.assert_called_once_with("events")
             doc = mock_db.collection.return_value.add.call_args[0][0]
-            assert doc["template_id"] == "tmpl-123"
-            assert doc["subject"] == "Assunto teste"
-            assert doc["to"] == "destino@example.com"
-            assert doc["from_email"] == "noreply@spartacus.app.br"
-            assert doc["data"]["name"] == "Test"
+            assert doc["eventId"] == "test.event"
+            assert doc["projectId"] == "test-project"
+            assert doc["source"] == "test_service"
+            assert doc["status"] == "pending"
+            assert doc["payload"]["name"] == "Test"
 
 
 _PROJECT_ID = "test-project"
