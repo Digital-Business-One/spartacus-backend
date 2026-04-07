@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from fastapi import HTTPException
 from firebase_admin import firestore
 
+from app.domain.account_states import AccountStatus
 from app.events.models import DomainEvent
 from app.logging.decorator import log
 from app.models.medical_history import (
@@ -11,6 +13,7 @@ from app.models.medical_history import (
     MedicalHistoryIn,
     MedicalHistoryOut,
     MedicalHistoryRequest,
+    PendingAnamneseItem,
     SymptomsIn,
 )
 from app.services.account_service import AccountService
@@ -28,6 +31,15 @@ class MedicalHistoryService:
         data: MedicalHistoryRequest,
         actor_uid: str,
     ) -> tuple[MedicalHistoryOut, DomainEvent | None]:
+        """Submit medical history.
+
+        - user_id: target user (whose anamnese this is)
+        - actor_uid: who is filling (may be guardian filling for dependent)
+        """
+        # If actor != target, validate guardian relationship
+        if actor_uid != user_id:
+            self._assert_guardian_of(actor_uid, user_id)
+
         db = firestore.client()
         now = datetime.now(timezone.utc).isoformat()
         doc_id = f"{project_id}_{user_id}"
@@ -75,6 +87,78 @@ class MedicalHistoryService:
         )
 
         return out, event
+
+    @log
+    def list_pending(
+        self, project_id: str, requesting_uid: str
+    ) -> list[PendingAnamneseItem]:
+        """Return list of users (self + dependents) needing anamnese."""
+        db = firestore.client()
+        items: list[PendingAnamneseItem] = []
+
+        # Self
+        self_doc = db.collection(self._USERS).document(requesting_uid).get()
+        if self_doc.exists:
+            self_data = self_doc.to_dict()
+            if (
+                self_data.get("approvalStatus")
+                == AccountStatus.WAITING_MEDICAL_HISTORY
+            ):
+                items.append(
+                    PendingAnamneseItem(
+                        uid=requesting_uid,
+                        name=self_data.get("name", ""),
+                        birth_date=self_data.get("birthDate", ""),
+                        is_self=True,
+                        is_dependent=False,
+                    )
+                )
+
+        # Dependents whose status is waiting_medical_history
+        deps = (
+            db.collection(self._USERS)
+            .where("guardianUid", "==", requesting_uid)
+            .where("isDependent", "==", True)
+            .stream()
+        )
+        for dep_doc in deps:
+            dep = dep_doc.to_dict()
+            if (
+                dep.get("approvalStatus")
+                == AccountStatus.WAITING_MEDICAL_HISTORY
+            ):
+                items.append(
+                    PendingAnamneseItem(
+                        uid=dep_doc.id,
+                        name=dep.get("name", ""),
+                        birth_date=dep.get("birthDate", ""),
+                        is_self=False,
+                        is_dependent=True,
+                    )
+                )
+
+        return items
+
+    def _assert_guardian_of(
+        self, guardian_uid: str, target_uid: str
+    ) -> None:
+        db = firestore.client()
+        target_doc = db.collection(self._USERS).document(target_uid).get()
+        if not target_doc.exists:
+            raise HTTPException(
+                status_code=404, detail="Dependente não encontrado"
+            )
+        target = target_doc.to_dict()
+        if not target.get("isDependent"):
+            raise HTTPException(
+                status_code=403,
+                detail="Usuário alvo não é dependente",
+            )
+        if target.get("guardianUid") != guardian_uid:
+            raise HTTPException(
+                status_code=403,
+                detail="Você não é responsável deste dependente",
+            )
 
     @log
     def get(
