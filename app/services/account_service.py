@@ -157,6 +157,21 @@ class AccountService:
             if "guardian" in roles:
                 self._auto_approve_dependents(db, project_id, uid)
 
+        # If guardian goes to waiting_medical_history: send dependents along.
+        # This lets the guardian fill all anamneses (own + dependents) in
+        # the same session, instead of waiting for guardian's own anamnese
+        # to be approved by the team first.
+        if (
+            new_status == AccountStatus.WAITING_MEDICAL_HISTORY
+            and "guardian" in roles
+        ):
+            self._send_student_dependents_to_anamnese(db, uid)
+
+        # If guardian is approved without anamnese (action="approve"),
+        # students dependents still need anamnese — handled by
+        # _auto_approve_dependents above which moves them to
+        # waiting_medical_history.
+
         # Build event for notification
         event = self._build_event(
             action, user, new_status, current_status
@@ -225,6 +240,27 @@ class AccountService:
             d = m.to_dict()
             projects_claims[d["projectId"]] = d.get("roles", [])
         auth.set_custom_user_claims(uid, {"projects": projects_claims})
+
+    def _send_student_dependents_to_anamnese(
+        self, db, guardian_uid: str
+    ) -> None:
+        """When guardian transitions to waiting_medical_history, also send
+        any student dependents to waiting_medical_history so the guardian
+        can fill all anamneses in the same session."""
+        deps = (
+            db.collection(self._USERS)
+            .where("guardianUid", "==", guardian_uid)
+            .where("isDependent", "==", True)
+            .stream()
+        )
+        for dep_doc in deps:
+            dep = dep_doc.to_dict()
+            if dep.get("approvalStatus") == AccountStatus.PENDING_APPROVAL:
+                dep_doc.reference.update(
+                    {
+                        "approvalStatus": AccountStatus.WAITING_MEDICAL_HISTORY,
+                    }
+                )
 
     def _auto_approve_dependents(
         self, db, project_id: str, guardian_uid: str
