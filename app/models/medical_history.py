@@ -136,3 +136,20 @@ class MedicalHistoryOut(BaseModel):
     filled_by: Optional[str] = None
     reviewed_at: Optional[str] = None
     reviewed_by: Optional[str] = None
+
+
+class PendingAnamneseItem(BaseModel):
+    """A user (self or dependent) that needs medical history filled."""
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    uid: str
+    name: str
+    birth_date: str
+    is_self: bool
+    is_dependent: bool
+
+
+class PendingAnamneseList(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    pending: list[PendingAnamneseItem]
