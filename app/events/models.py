@@ -31,6 +31,16 @@ class SignupEmailPayload:
 
     def personalization(self) -> dict:
         return {
+            "uid": self.uid,
+            "entity_id": self.uid,
+            "source_entity_ref": f"users/{self.uid}",
+            "source_entity_type": "users",
+            "target_uid": self.uid,
+            "target_name": self.name,
+            "author_uid": self.uid,
+            "author_name": self.name,
+            "title": "Nova conta criada",
+            "description": f"{self.name} ({self.roles_label})",
             "name": self.name,
             "email": self.email,
             "phone": self.phone,

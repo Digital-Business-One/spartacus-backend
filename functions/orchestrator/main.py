@@ -9,8 +9,10 @@ RFC-10 (base) + RFC-11 (timeline, calendar, push channels).
 
 from datetime import datetime, timezone
 
+import functions_framework
+from cloudevents.http import CloudEvent
 from firebase_admin import firestore, initialize_app
-from firebase_functions import firestore_fn
+from google.cloud.firestore_v1.base_document import DocumentSnapshot
 
 initialize_app()
 
@@ -190,8 +192,19 @@ EVENT_RULES: dict[str, dict] = {
     # ══ CONTAS — existentes (email) + timeline/push novos ═════════════════════
 
     "signup.email_confirmation": {
-        "channels": ["email"],
+        "channels": ["email", "timeline", "push"],
         "email": {"template_id": _TPL_SIGNUP, "subject": "Confirme seu e-mail — Spartacus"},
+        "timeline": {
+            "action": "create",
+            "type": "account_created",
+            "visibility": "staff_only",
+            "id_prefix": "account",
+        },
+        "push": {
+            "target": "staff",
+            "title_template": "Novo cadastro",
+            "body_template": "{name} criou uma conta",
+        },
     },
     "signup.account_created": {
         "channels": ["email", "timeline", "push"],
@@ -532,21 +545,28 @@ def _handle_push(rule, event_data, payload, doc_path, db):
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 
-@firestore_fn.on_document_created(document="events/{docId}")
-def event_orchestrator(
-    event: firestore_fn.Event[firestore_fn.DocumentSnapshot],
-) -> None:
+@functions_framework.cloud_event
+def event_orchestrator(cloud_event: CloudEvent) -> None:
     """Process Firestore document creation in `events` collection."""
-    snapshot = event.data
-    if not snapshot:
-        print("SKIP: no data in event")
+    db = firestore.client()
+
+    # Extract document path from CloudEvent subject
+    # Format: "documents/events/{docId}"
+    subject = cloud_event.get("subject", "")
+    doc_path = subject.removeprefix("documents/")
+    if not doc_path or not doc_path.startswith("events/"):
+        print(f"SKIP: unexpected subject={subject}")
+        return
+
+    doc_ref = db.document(doc_path)
+    snapshot = doc_ref.get()
+    if not snapshot.exists:
+        print(f"SKIP: document not found at {doc_path}")
         return
 
     event_data = snapshot.to_dict()
     event_id = event_data.get("eventId", "")
     rule = EVENT_RULES.get(event_id)
-    doc_path = f"events/{snapshot.id}"
-    doc_ref = snapshot.reference
 
     if not rule or not rule.get("channels"):
         doc_ref.update({"status": "processed", "processedAt": _now()})
@@ -554,7 +574,6 @@ def event_orchestrator(
         return
 
     payload = event_data.get("payload", {})
-    db = firestore.client()
 
     try:
         for channel in rule["channels"]:
