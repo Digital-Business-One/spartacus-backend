@@ -31,9 +31,21 @@ class TimelineOrigin(StrEnum):
 
 
 class ValidationStatus(StrEnum):
-    PENDING = "pending"
+    """Validation lifecycle for attendance and donations.
+
+    Attendance flow: REGISTERED → CONFIRMED | ABSENT | ABSENT_JUSTIFIED
+    Donation flow:   PLEDGED → RECEIVED
+    """
+    # shared
+    PENDING = "pending"  # legacy alias
+    # attendance
+    REGISTERED = "registered"
     CONFIRMED = "confirmed"
     ABSENT = "absent"
+    ABSENT_JUSTIFIED = "absent_justified"
+    # donations
+    PLEDGED = "pledged"
+    RECEIVED = "received"
 
 
 STAFF_ROLES: frozenset[str] = frozenset(

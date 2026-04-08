@@ -7,12 +7,12 @@ e todas as collections relacionadas. NÃO faz parte da suite de testes
 automatizados — executar manualmente.
 
 Collections limpas (todas escopadas por projectId):
-    - users/{uid}                        (doc + sub-collection push_tokens)
+    - users/{uid}                        (doc + sub-collections push_tokens, historic)
     - memberships                        (where projectId AND userId)
-    - presencas                          (where projectId AND userId)
-        + timeline_entries/presenca_{id} (deterministic projection)
-    - doacoes                            (where projectId AND userId)
-        + timeline_entries/doacao_{id}
+    - attendance                         (where projectId AND userId)
+        + timeline_entries/attendance_{id} (deterministic projection)
+    - donations                          (where projectId AND userId)
+        + timeline_entries/donation_{id}
     - posts                              (where projectId AND authorUid)
         + timeline_entries/post_{id}
         + eventos_calendario/post_{id}
@@ -117,35 +117,35 @@ def delete_user_cascade(
         for k, v in sub_counts.items():
             _add(counts, k, v)
 
-    # ── 2. presencas + timeline_entries/presenca_{id} ───────────────────────
-    presencas = list(
-        db.collection("presencas")
+    # ── 2. attendance + timeline_entries/attendance_{id} ────────────────────
+    attendance_records = list(
+        db.collection("attendance")
         .where("projectId", "==", project_id)
         .where("userId", "==", uid)
         .stream()
     )
-    for p in presencas:
-        tl_ref = db.collection("timeline_entries").document(f"presenca_{p.id}")
+    for p in attendance_records:
+        tl_ref = db.collection("timeline_entries").document(f"attendance_{p.id}")
         if _delete_doc(tl_ref, dry_run):
-            _add(counts, "timeline_entries (presenca)")
+            _add(counts, "timeline_entries (attendance)")
         if not dry_run:
             p.reference.delete()
-    _add(counts, "presencas", len(presencas))
+    _add(counts, "attendance", len(attendance_records))
 
-    # ── 3. doacoes + timeline_entries/doacao_{id} ───────────────────────────
-    doacoes = list(
-        db.collection("doacoes")
+    # ── 3. donations + timeline_entries/donation_{id} ───────────────────────
+    donations = list(
+        db.collection("donations")
         .where("projectId", "==", project_id)
         .where("userId", "==", uid)
         .stream()
     )
-    for d in doacoes:
-        tl_ref = db.collection("timeline_entries").document(f"doacao_{d.id}")
+    for d in donations:
+        tl_ref = db.collection("timeline_entries").document(f"donation_{d.id}")
         if _delete_doc(tl_ref, dry_run):
-            _add(counts, "timeline_entries (doacao)")
+            _add(counts, "timeline_entries (donation)")
         if not dry_run:
             d.reference.delete()
-    _add(counts, "doacoes", len(doacoes))
+    _add(counts, "donations", len(donations))
 
     # ── 4. posts + timeline_entries/post_{id} + eventos_calendario/post_{id}
     posts = list(
@@ -195,6 +195,15 @@ def delete_user_cascade(
         if not dry_run:
             pt.reference.delete()
     _add(counts, "push_tokens", len(push_tokens))
+
+    # ── 8b. historic sub-collection (RFC-12) ────────────────────────────────
+    historic = list(
+        db.collection("users").document(uid).collection("historic").stream()
+    )
+    for h in historic:
+        if not dry_run:
+            h.reference.delete()
+    _add(counts, "historic", len(historic))
 
     # ── 9. user doc ─────────────────────────────────────────────────────────
     user_ref = db.collection("users").document(uid)

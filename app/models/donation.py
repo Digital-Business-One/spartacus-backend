@@ -53,13 +53,20 @@ class DonationHistoryItem(BaseModel):
         populate_by_name=True, alias_generator=to_camel,
     )
 
+    # status: pledged | received | pending
+    # status_label: Aguardando | Validado | Pendente
     id: str
-    month: str              # "2026-03"
-    month_label: str        # "MARÇO / 2026"
-    item_label: str         # "1 pacote de café"
-    status: str             # "pledged" | "received"
-    status_label: str       # "Entregue" | "Pendente"
-    created_at: str         # "15 de Março, 2026"
+    month: str                                    # "2026-03"
+    month_label: str                              # "MARÇO / 2026"
+    item: Optional[str] = None
+    item_label: str
+    item_description: Optional[str] = None
+    status: str
+    status_label: str
+    created_at: str
+    received_by: Optional[str] = None
+    received_by_name: Optional[str] = None
+    received_at: Optional[str] = None
 
 
 class DonationHistoryOut(BaseModel):

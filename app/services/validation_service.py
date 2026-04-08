@@ -7,9 +7,40 @@ from firebase_admin import firestore
 from app.domain.enums import ValidationStatus
 from app.events.models import DomainEvent, ReviewRequestedPayload, ValidationPayload
 from app.logging.decorator import log
+from app.services.account_history_service import AccountHistoryService
 
 
 class ValidationService:
+
+    _ATTENDANCE_VALID_STATUSES = (
+        ValidationStatus.CONFIRMED,
+        ValidationStatus.ABSENT,
+        ValidationStatus.ABSENT_JUSTIFIED,
+    )
+    _DONATION_VALID_STATUSES = (
+        ValidationStatus.RECEIVED,
+        ValidationStatus.ABSENT,
+    )
+
+    @staticmethod
+    def _describe_validation(
+        collection: str, status: str, data: dict, actor_name: str,
+    ) -> str:
+        if collection == "attendance":
+            turma = data.get("turmaName", "treino")
+            labels = {
+                "confirmed": f"Presença confirmada em {turma}",
+                "absent": f"Falta registrada em {turma}",
+                "absent_justified": f"Falta justificada em {turma}",
+            }
+        else:
+            item = data.get("item", "doação")
+            labels = {
+                "received": f"Doação validada ({item})",
+                "absent": f"Doação não recebida ({item})",
+            }
+        base = labels.get(status, f"{collection}: {status}")
+        return f"{base} por {actor_name}" if actor_name else base
 
     @log
     def validate(
@@ -20,9 +51,16 @@ class ValidationService:
         status: str,
         actor_uid: str,
     ) -> DomainEvent:
-        """Confirm or mark absent on a presenca/doacao record."""
-        if status not in (ValidationStatus.CONFIRMED, ValidationStatus.ABSENT):
-            raise ValueError(f"Status inválido: {status}")
+        """Confirm or mark absent on an attendance/donation record."""
+        if collection == "attendance":
+            valid = self._ATTENDANCE_VALID_STATUSES
+        elif collection == "donations":
+            valid = self._DONATION_VALID_STATUSES
+        else:
+            raise ValueError(f"Coleção inválida: {collection}")
+
+        if status not in valid:
+            raise ValueError(f"Status inválido para {collection}: {status}")
 
         db = firestore.client()
         doc_ref = db.collection(collection).document(doc_id)
@@ -42,8 +80,31 @@ class ValidationService:
             "validatedAt": now,
         })
 
+        # Record in account history (target user)
+        target_uid = data.get("userId", "")
+        if target_uid:
+            actor_name = ""
+            actor_doc = db.collection("users").document(actor_uid).get()
+            if actor_doc.exists:
+                actor_name = actor_doc.to_dict().get("name", "")
+            history_event_type = (
+                "attendance" if collection == "attendance" else "donation"
+            )
+            AccountHistoryService().record(
+                uid=target_uid,
+                project_id=project_id,
+                event_type=history_event_type,
+                event_subtype=status,
+                actor_uid=actor_uid,
+                actor_name=actor_name,
+                actor_roles=[],
+                description=self._describe_validation(
+                    collection, status, data, actor_name,
+                ),
+            )
+
         # Map collection → event prefix
-        prefix = "checkin" if collection == "presencas" else "donation"
+        prefix = "checkin" if collection == "attendance" else "donation"
         event_id = f"{prefix}.{status}"
 
         return DomainEvent(
@@ -83,7 +144,9 @@ class ValidationService:
         if data.get("userId") != actor_uid:
             raise PermissionError("Apenas o titular pode solicitar revisão")
 
-        if data.get("status") != ValidationStatus.ABSENT:
+        if data.get("status") not in (
+            ValidationStatus.ABSENT, ValidationStatus.ABSENT_JUSTIFIED,
+        ):
             raise ValueError("Revisão só é possível para registros não confirmados")
 
         if data.get("reviewRequested"):
@@ -95,7 +158,7 @@ class ValidationService:
             "reviewRequestedAt": now,
         })
 
-        prefix = "checkin" if collection == "presencas" else "donation"
+        prefix = "checkin" if collection == "attendance" else "donation"
 
         return DomainEvent(
             id=f"{prefix}.review_requested",

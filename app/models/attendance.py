@@ -9,13 +9,22 @@ class AttendanceRecord(BaseModel):
         populate_by_name=True, alias_generator=to_camel,
     )
 
-    id: str                          # presenca doc id or generated key
-    date: str                        # "15 de Março"
-    date_sort: str                   # "2026-03-15" for client sorting
-    modality_name: str               # "Jiu-Jitsu"
-    status: str                      # "present" | "absent" | "justified"
-    status_label: str                # "Presença" | "Falta" | "Falta Justificada"
-    justification: Optional[str] = None  # e.g. "Viagem a trabalho"
+    # status: registered | confirmed | absent | absent_justified
+    # status_label: Aguardando | Validado | Não confirmado | Falta Justificada
+    id: str
+    date: str                                 # "15 de Março"
+    date_sort: str                            # "2026-03-15" for sorting
+    time: Optional[str] = None                # "14:30" (HH:MM)
+    class_id: str
+    class_name: str
+    modality_name: str
+    teacher_name: Optional[str] = None
+    status: str
+    status_label: str
+    validated_by: Optional[str] = None
+    validated_by_name: Optional[str] = None
+    validated_at: Optional[str] = None
+    justification: Optional[str] = None
 
 
 class MonthSummary(BaseModel):

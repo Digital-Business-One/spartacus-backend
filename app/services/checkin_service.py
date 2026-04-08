@@ -51,7 +51,7 @@ class CheckinService:
     _CLASSES = "classes"
     _MODALITIES = "modalities"
     _AULAS = "aulas"
-    _PRESENCAS = "presencas"
+    _ATTENDANCE = "attendance"
 
     @log
     def get_available(
@@ -195,22 +195,10 @@ class CheckinService:
             except ValueError:
                 pass
 
-        # Create presenca
+        # Resolve names so we can denormalize on the attendance doc
         now_iso = datetime.now(timezone.utc).isoformat()
         turma_id = aula_data.get("turmaId", "")
-        presenca_data = {
-            "projectId": project_id,
-            "userId": target_uid,
-            "actingAs": acting_as,
-            "aulaId": aula_id,
-            "turmaId": turma_id,
-            "timestamp": now_iso,
-            "status": "REGISTERED",
-        }
 
-        _, ref = db.collection(self._PRESENCAS).add(presenca_data)
-
-        # Resolve names for event payload
         user_doc = db.collection(self._USERS).document(target_uid).get()
         user_name = ""
         if user_doc.exists:
@@ -219,17 +207,41 @@ class CheckinService:
         turma_doc = db.collection(self._CLASSES).document(turma_id).get()
         turma_name = ""
         modality_name = ""
+        teacher_name: str | None = None
         if turma_doc.exists:
             td = turma_doc.to_dict()
             turma_name = td.get("name", "")
             modality_name = self._resolve_modality(db, td)
+            teacher_name = td.get("teacherName") or td.get("teacher")
+
+        # Create attendance record (with denormalized names)
+        attendance_data = {
+            "projectId": project_id,
+            "userId": target_uid,
+            "userName": user_name,
+            "actingAs": acting_as,
+            "aulaId": aula_id,
+            "turmaId": turma_id,
+            "turmaName": turma_name,
+            "teacherName": teacher_name,
+            "timestamp": now_iso,
+            "status": "registered",
+            "validatedBy": None,
+            "validatedAt": None,
+            "reviewRequested": False,
+            "reviewRequestedAt": None,
+            "reviewResolved": False,
+            "reviewResolvedAt": None,
+        }
+
+        _, ref = db.collection(self._ATTENDANCE).add(attendance_data)
 
         event = DomainEvent(
             id="checkin.registered",
             payload=CheckinRegisteredPayload(
                 entity_id=ref.id,
-                source_entity_ref=f"presencas/{ref.id}",
-                source_entity_type="presencas",
+                source_entity_ref=f"attendance/{ref.id}",
+                source_entity_type="attendance",
                 target_uid=target_uid,
                 target_name=user_name,
                 author_uid=uid,
@@ -241,8 +253,8 @@ class CheckinService:
         )
 
         return CheckinResponse(
-            presenca_id=ref.id,
-            status="REGISTERED",
+            attendance_id=ref.id,
+            status="registered",
             timestamp=now_iso,
         ), event
 
@@ -267,7 +279,7 @@ class CheckinService:
         self, db, project_id, uid, aula_id,
     ) -> bool:
         results = list(
-            db.collection(self._PRESENCAS)
+            db.collection(self._ATTENDANCE)
             .where("projectId", "==", project_id)
             .where("userId", "==", uid)
             .where("aulaId", "==", aula_id)
