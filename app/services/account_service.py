@@ -285,13 +285,20 @@ class AccountService:
 
         class_names = self._fetch_class_names(db, list(all_class_ids))
 
+        # Status filter accepts CSV (e.g. "rejected,expelled,archived")
+        status_set: set[str] | None = None
+        if status_filter:
+            status_set = {
+                s.strip() for s in status_filter.split(",") if s.strip()
+            }
+
         results: list[AccountOut] = []
         for uid, user in user_data_list:
             roles = uid_roles.get(uid, [])
             status = user.get("approvalStatus", "")
 
             # Apply status filter
-            if status_filter and status != status_filter:
+            if status_set and status not in status_set:
                 continue
 
             # Apply search filter (name contains, case-insensitive)
