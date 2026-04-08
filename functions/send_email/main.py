@@ -3,12 +3,17 @@
 Triggered when a document is created in the Firestore `notifications`
 collection. Reads the document, sends the email via SendGrid, and
 updates the document status.
+
+Uses functions_framework.cloud_event (Gen2 standard) instead of the
+firebase_functions decorator, which the runtime no longer recognizes
+properly with the current version of functions-framework.
 """
 
 import os
 
+import functions_framework
+from cloudevents.http import CloudEvent
 from firebase_admin import firestore, initialize_app
-from firebase_functions import firestore_fn
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import From, Mail, To
 
@@ -17,12 +22,23 @@ initialize_app()
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 
 
-@firestore_fn.on_document_created(document="notifications/{docId}")
-def send_email(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
-    """Process Firestore document creation and send email via SendGrid."""
-    snapshot = event.data
-    if not snapshot:
-        print("SKIP: no data in event")
+@functions_framework.cloud_event
+def send_email(cloud_event: CloudEvent) -> None:
+    """Process Firestore document creation in `notifications` collection."""
+    db = firestore.client()
+
+    # Extract document path from CloudEvent subject
+    # Format: "documents/notifications/{docId}"
+    subject_attr = cloud_event.get("subject", "")
+    doc_path = subject_attr.removeprefix("documents/")
+    if not doc_path or not doc_path.startswith("notifications/"):
+        print(f"SKIP: unexpected subject={subject_attr}")
+        return
+
+    doc_ref = db.document(doc_path)
+    snapshot = doc_ref.get()
+    if not snapshot.exists:
+        print(f"SKIP: document not found at {doc_path}")
         return
 
     fields = snapshot.to_dict()
@@ -36,6 +52,7 @@ def send_email(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None
 
     if not to_email or not template_id:
         print(f"SKIP: missing to={to_email} or template_id={template_id}")
+        doc_ref.update({"status": "skipped"})
         return
 
     # Inject subject into template data for {{subject}} in SendGrid
@@ -47,8 +64,6 @@ def send_email(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None
     message.to = To(to_email)
     message.template_id = template_id
     message.dynamic_template_data = data
-
-    doc_ref = snapshot.reference
 
     try:
         sg = SendGridAPIClient(SENDGRID_API_KEY)
