@@ -60,13 +60,14 @@ class CompetitionOut(BaseModel):
 
 
 class AccountOut(BaseModel):
-    """Listing card payload — slim. Used by GET /accounts (paginated)."""
+    """Listing card payload. Used by GET /accounts (paginated)."""
     uid: str
     name: str
     email: str
     roles: list[str]
     status: str
     email_verified: bool = False
+    photo_url: Optional[str] = None
     birth_date: Optional[str] = None
     gender: Optional[str] = None
     phone: Optional[str] = None
@@ -75,9 +76,17 @@ class AccountOut(BaseModel):
     created_at: Optional[str] = None
     is_dependent: bool = False
     guardian_uid: Optional[str] = None
+    guardian_name: Optional[str] = None
+    guardian_photo_url: Optional[str] = None
     class_ids: list[str] = []
     class_names: list[str] = []
+    modality_names: list[str] = []
+    graduation: Optional[dict] = None
     available_actions: list[AccountAction] = []
+    dependents: list["AccountOut"] = []
+
+
+AccountOut.model_rebuild()
 
 
 class AccountDetailOut(BaseModel):

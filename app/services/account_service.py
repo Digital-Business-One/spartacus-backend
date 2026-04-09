@@ -283,7 +283,8 @@ class AccountService:
             all_class_ids.update(user.get("classIds", []))
             user_data_list.append((doc.id, user))
 
-        class_names = self._fetch_class_names(db, list(all_class_ids))
+        class_info = self._fetch_class_info(db, list(all_class_ids))
+        class_names_map = {cid: v["name"] for cid, v in class_info.items()}
 
         # Status filter accepts CSV (e.g. "rejected,expelled,archived")
         status_set: set[str] | None = None
@@ -307,14 +308,68 @@ class AccountService:
                 if search.lower() not in name:
                     continue
 
+            # Resolve unique modality names from class info
+            user_class_ids = user.get("classIds", [])
+            modality_names = list(dict.fromkeys(
+                class_info[cid]["modality_name"]
+                for cid in user_class_ids
+                if cid in class_info and class_info[cid]["modality_name"]
+            ))
+
             actions = get_available_actions(
                 status, roles, executed_by_filter="team"
             )
             results.append(
                 self._build_account_out(
-                    uid, user, roles, status, actions, class_names
+                    uid, user, roles, status, actions, class_names_map,
+                    modality_names=modality_names,
                 )
             )
+
+        # ── Enrich: guardian info for dependents ──────────────────────
+        guardian_uids = {
+            r.guardian_uid for r in results
+            if r.is_dependent and r.guardian_uid
+        }
+        guardian_map: dict[str, dict] = {}
+        if guardian_uids:
+            # Try to resolve from already-loaded user data
+            for uid, user in user_data_list:
+                if uid in guardian_uids:
+                    guardian_map[uid] = {
+                        "name": user.get("name"),
+                        "photo_url": user.get("photoUrl"),
+                    }
+            # Fetch any guardians not in user_data_list
+            missing = guardian_uids - set(guardian_map.keys())
+            if missing:
+                refs = [
+                    db.collection(self._USERS).document(uid)
+                    for uid in missing
+                ]
+                for doc in db.get_all(refs):
+                    if doc.exists:
+                        d = doc.to_dict()
+                        guardian_map[doc.id] = {
+                            "name": d.get("name"),
+                            "photo_url": d.get("photoUrl"),
+                        }
+
+        for r in results:
+            if r.is_dependent and r.guardian_uid and r.guardian_uid in guardian_map:
+                info = guardian_map[r.guardian_uid]
+                r.guardian_name = info.get("name")
+                r.guardian_photo_url = info.get("photo_url")
+
+        # ── Enrich: dependents for guardians ──────────────────────────
+        deps_by_guardian: dict[str, list[AccountOut]] = {}
+        for r in results:
+            if r.is_dependent and r.guardian_uid:
+                deps_by_guardian.setdefault(r.guardian_uid, []).append(r)
+
+        for r in results:
+            if "guardian" in r.roles:
+                r.dependents = deps_by_guardian.get(r.uid, [])
 
         return results
 
@@ -441,18 +496,53 @@ class AccountService:
     def _fetch_class_names(
         self, db, class_ids: list[str]
     ) -> dict[str, str]:
+        """Legacy helper — returns {class_id: class_name}."""
+        info = self._fetch_class_info(db, class_ids)
+        return {cid: v["name"] for cid, v in info.items()}
+
+    def _fetch_class_info(
+        self, db, class_ids: list[str]
+    ) -> dict[str, dict]:
+        """Returns {class_id: {"name": str, "modality_name": str}}."""
         if not class_ids:
             return {}
         refs = [
             db.collection("classes").document(cid)
             for cid in class_ids
         ]
-        docs = db.get_all(refs)
-        return {
-            doc.id: doc.to_dict().get("name", doc.id)
-            for doc in docs
-            if doc.exists
-        }
+        docs = list(db.get_all(refs))
+
+        # Collect modality IDs for batch resolution
+        modality_ids: set[str] = set()
+        for doc in docs:
+            if doc.exists:
+                mid = doc.to_dict().get("modalityId", "")
+                if mid:
+                    modality_ids.add(mid)
+
+        modality_names: dict[str, str] = {}
+        if modality_ids:
+            mod_refs = [
+                db.collection("modalities").document(mid)
+                for mid in modality_ids
+            ]
+            for mod_doc in db.get_all(mod_refs):
+                if mod_doc.exists:
+                    modality_names[mod_doc.id] = mod_doc.to_dict().get(
+                        "name", mod_doc.id,
+                    )
+
+        result: dict[str, dict] = {}
+        for doc in docs:
+            if not doc.exists:
+                continue
+            data = doc.to_dict()
+            mid = data.get("modalityId", "")
+            result[doc.id] = {
+                "name": data.get("name", doc.id),
+                "modality_name": modality_names.get(mid, mid),
+            }
+        return result
 
     def _fetch_classes_detail(
         self, db, class_ids: list[str]
@@ -704,6 +794,11 @@ class AccountService:
         status: str,
         transitions: list,
         class_names_map: dict[str, str] | None = None,
+        *,
+        modality_names: list[str] | None = None,
+        guardian_name: str | None = None,
+        guardian_photo_url: str | None = None,
+        dependents: list | None = None,
     ) -> AccountOut:
         class_ids = user.get("classIds", [])
         names_map = class_names_map or {}
@@ -722,6 +817,11 @@ class AccountService:
                 city=addr_data.get("city"),
                 state=addr_data.get("state"),
             )
+
+        # Graduation (raw dict, not typed like detail page)
+        graduation_raw = user.get("graduation")
+        graduation = graduation_raw if graduation_raw else None
+
         return AccountOut(
             uid=uid,
             name=user.get("name", ""),
@@ -729,6 +829,7 @@ class AccountService:
             roles=roles,
             status=status,
             email_verified=user.get("emailVerified", False),
+            photo_url=user.get("photoUrl"),
             birth_date=user.get("birthDate"),
             gender=user.get("gender"),
             phone=user.get("phone"),
@@ -737,8 +838,12 @@ class AccountService:
             created_at=user.get("createdAt"),
             is_dependent=user.get("isDependent", False),
             guardian_uid=user.get("guardianUid"),
+            guardian_name=guardian_name,
+            guardian_photo_url=guardian_photo_url,
             class_ids=class_ids,
             class_names=class_names,
+            modality_names=modality_names or [],
+            graduation=graduation,
             available_actions=[
                 AccountAction(
                     action=t.action,
@@ -747,6 +852,7 @@ class AccountService:
                 )
                 for t in transitions
             ],
+            dependents=dependents or [],
         )
 
     _APP_URL = "https://spartacus.app.br"
