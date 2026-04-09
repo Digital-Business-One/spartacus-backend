@@ -599,7 +599,7 @@ class AccountService:
             db.collection("classes").document(cid)
             for cid in class_ids
         ]
-        docs = db.get_all(refs)
+        docs = list(db.get_all(refs))
         # Resolve modality names in batch
         modality_ids = {
             doc.to_dict().get("modalityId", "")
