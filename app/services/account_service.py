@@ -378,41 +378,42 @@ class AccountService:
         orphan_guardian_uids = (
             set(deps_by_guardian.keys()) - result_uids
         )
-        if orphan_guardian_uids:
-            for guid in orphan_guardian_uids:
-                ginfo = guardian_map.get(guid)
-                if not ginfo:
-                    continue
-                # Fetch the full guardian doc to build a proper card
-                gdoc = db.collection(self._USERS).document(guid).get()
-                if not gdoc.exists:
-                    continue
-                guser = gdoc.to_dict()
-                groles = self._get_roles(db, project_id, guid)
-                gstatus = guser.get("approvalStatus", "")
-                g_class_ids = guser.get("classIds", [])
-                g_modality_names = list(dict.fromkeys(
-                    class_info[cid]["modality_name"]
-                    for cid in g_class_ids
-                    if cid in class_info
-                    and class_info[cid]["modality_name"]
-                ))
-                gactions = get_available_actions(
-                    gstatus, groles, executed_by_filter="team",
-                )
-                guardian_out = self._build_account_out(
-                    guid, guser, groles, gstatus, gactions,
-                    class_names_map,
-                    modality_names=g_modality_names,
-                )
-                guardian_out.dependents = deps_by_guardian[guid]
-                results.append(guardian_out)
+        for guid in orphan_guardian_uids:
+            ginfo = guardian_map.get(guid)
+            if not ginfo:
+                continue
+            gdoc = db.collection(self._USERS).document(guid).get()
+            if not gdoc.exists:
+                continue
+            guser = gdoc.to_dict()
+            groles = self._get_roles(db, project_id, guid)
+            gstatus = guser.get("approvalStatus", "")
+            g_class_ids = guser.get("classIds", [])
+            g_modality_names = list(dict.fromkeys(
+                class_info[cid]["modality_name"]
+                for cid in g_class_ids
+                if cid in class_info
+                and class_info[cid]["modality_name"]
+            ))
+            gactions = get_available_actions(
+                gstatus, groles, executed_by_filter="team",
+            )
+            guardian_out = self._build_account_out(
+                guid, guser, groles, gstatus, gactions,
+                class_names_map,
+                modality_names=g_modality_names,
+            )
+            guardian_out.dependents = deps_by_guardian[guid]
+            results.append(guardian_out)
 
-            # Remove the orphan dep cards that are now nested
-            nested_uids = set()
-            for r in results:
-                for d in r.dependents:
-                    nested_uids.add(d.uid)
+        # Remove standalone dep entries that are now nested inside
+        # a guardian — applies to BOTH cases: guardian was already in
+        # results (BUG 004) or was synthesized above (BUG 002).
+        nested_uids: set[str] = set()
+        for r in results:
+            for d in r.dependents:
+                nested_uids.add(d.uid)
+        if nested_uids:
             results = [r for r in results if r.uid not in nested_uids]
 
         return results
