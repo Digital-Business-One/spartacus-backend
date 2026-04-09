@@ -316,12 +316,12 @@ class AttendanceService:
                         justification = None
                     elif status_raw == "confirmed":
                         status = "confirmed"
-                        status_label = "Validado"
+                        status_label = "Confirmado"
                         justification = None
                         attended += 1
                     else:  # "registered" (check-in done, not yet validated)
                         status = "registered"
-                        status_label = "Aguardando"
+                        status_label = "Aguardando confirmação"
                         justification = None
                         attended += 1
                     rec_id = matched.get("_id", date_sort)
