@@ -76,12 +76,28 @@ class MembershipService:
         if not doc.exists:
             raise LookupError("Membership não encontrado")
 
+        current_data = doc.to_dict()
         updates = {}
         if data.roles is not None:
             if len(data.roles) == 0:
                 raise ValueError(
                     "Usuário não pode ficar sem perfil"
                 )
+            # Block removing the last owner from the project
+            old_roles = current_data.get("roles", [])
+            if "owner" in old_roles and "owner" not in data.roles:
+                owner_count = sum(
+                    1
+                    for m in db.collection(self._COLLECTION)
+                    .where("projectId", "==", project_id)
+                    .where("status", "==", "active")
+                    .stream()
+                    if "owner" in m.to_dict().get("roles", [])
+                )
+                if owner_count <= 1:
+                    raise ValueError(
+                        "O projeto deve ter pelo menos um Controlador"
+                    )
             updates["roles"] = data.roles
         if data.status is not None:
             updates["status"] = data.status
