@@ -3,7 +3,12 @@ from datetime import datetime, timezone
 from firebase_admin import auth, firestore
 
 from app.logging.decorator import log
-from app.models.membership import MembershipCreate, MembershipOut, MembershipUpdate
+from app.models.membership import (
+    EligibleUserOut,
+    MembershipCreate,
+    MembershipOut,
+    MembershipUpdate,
+)
 
 
 class MembershipService:
@@ -73,6 +78,10 @@ class MembershipService:
 
         updates = {}
         if data.roles is not None:
+            if len(data.roles) == 0:
+                raise ValueError(
+                    "Usuário não pode ficar sem perfil"
+                )
             updates["roles"] = data.roles
         if data.status is not None:
             updates["status"] = data.status
@@ -88,6 +97,103 @@ class MembershipService:
             status=current["status"],
             joined_at=current["joined_at"],
         )
+
+    @log
+    def list_eligible(
+        self,
+        project_id: str,
+        role: str,
+        search: str | None = None,
+    ) -> list[EligibleUserOut]:
+        """Return approved accounts that do NOT have the given role."""
+        db = firestore.client()
+
+        # Get all memberships for the project
+        memberships = list(
+            db.collection(self._COLLECTION)
+            .where("projectId", "==", project_id)
+            .stream()
+        )
+
+        # Build maps: uid → roles, and collect uids that already have the role
+        uid_roles: dict[str, list[str]] = {}
+        has_role: set[str] = set()
+        for m in memberships:
+            data = m.to_dict()
+            uid = data["userId"]
+            roles = data.get("roles", [])
+            uid_roles[uid] = roles
+            if role in roles:
+                has_role.add(uid)
+
+        # Eligible = all members minus those who already have the role
+        eligible_uids = set(uid_roles.keys()) - has_role
+        if not eligible_uids:
+            return []
+
+        # Batch-read user docs
+        refs = [
+            db.collection("users").document(uid)
+            for uid in eligible_uids
+        ]
+        results: list[EligibleUserOut] = []
+        for doc in db.get_all(refs):
+            if not doc.exists:
+                continue
+            user = doc.to_dict()
+            # Only approved accounts
+            if user.get("approvalStatus") != "approved":
+                continue
+            # Search filter
+            if search:
+                name = user.get("name", "").lower()
+                if search.lower() not in name:
+                    continue
+            results.append(
+                EligibleUserOut(
+                    uid=doc.id,
+                    name=user.get("name", ""),
+                    email=user.get("email", ""),
+                    photo_url=user.get("photoUrl"),
+                    birth_date=user.get("birthDate"),
+                    roles=uid_roles.get(doc.id, []),
+                )
+            )
+
+        results.sort(key=lambda u: u.name.lower())
+        return results
+
+    @log
+    def assign_role(
+        self,
+        project_id: str,
+        role: str,
+        user_ids: list[str],
+    ) -> tuple[int, int]:
+        """Add a role to multiple users. Returns (assigned, skipped)."""
+        db = firestore.client()
+        assigned = 0
+        skipped = 0
+
+        for uid in user_ids:
+            doc_ref = db.collection(self._COLLECTION).document(
+                self._doc_id(project_id, uid)
+            )
+            doc = doc_ref.get()
+            if not doc.exists:
+                skipped += 1
+                continue
+            data = doc.to_dict()
+            current_roles = data.get("roles", [])
+            if role in current_roles:
+                skipped += 1
+                continue
+            new_roles = current_roles + [role]
+            doc_ref.update({"roles": new_roles})
+            self._sync_claims(uid)
+            assigned += 1
+
+        return assigned, skipped
 
     def _sync_claims(self, user_id: str) -> None:
         """Reconstrói e sincroniza as Custom Claims do Firebase para o usuário.

@@ -1,7 +1,16 @@
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
 
 from app.logging.decorator import log
-from app.models.membership import MembershipCreate, MembershipOut, MembershipUpdate
+from app.models.membership import (
+    AssignRoleRequest,
+    AssignRoleResponse,
+    EligibleUserOut,
+    MembershipCreate,
+    MembershipOut,
+    MembershipUpdate,
+)
 from app.security.context import auth_ctx
 from app.security.decorator import require_roles
 from app.services.membership_service import MembershipService
@@ -46,3 +55,35 @@ def update_member(
         return MembershipService().update(project_id, user_id, data)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+# ─── IAM endpoints (RFC-13) ──────────────────────────────────────────────────
+
+
+@log
+@router.get("/eligible")
+@require_roles("owner", "assistant")
+def list_eligible(
+    project_id: str,
+    role: str = Query(..., description="Role to check eligibility for"),
+    search: Optional[str] = Query(None),
+) -> list[EligibleUserOut]:
+    """Return approved accounts that do NOT have the given role."""
+    _assert_project(project_id)
+    return MembershipService().list_eligible(project_id, role, search)
+
+
+@log
+@router.post("/assign-role")
+@require_roles("owner", "assistant")
+def assign_role(
+    project_id: str, data: AssignRoleRequest
+) -> AssignRoleResponse:
+    """Add a role to multiple users at once."""
+    _assert_project(project_id)
+    assigned, skipped = MembershipService().assign_role(
+        project_id, data.role, data.user_ids,
+    )
+    return AssignRoleResponse(assigned=assigned, skipped=skipped)
