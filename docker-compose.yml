@@ -25,9 +25,18 @@ services:
         python3.12 -m venv $$fn/venv &&
         $$fn/venv/bin/pip install -q -r $$fn/requirements.txt;
       done &&
+      IMPORT_FLAG='' &&
+      if [ -d /app/emulator-data/firestore_export ]; then
+        echo '[emulators] Importing saved data from /app/emulator-data' &&
+        IMPORT_FLAG='--import /app/emulator-data';
+      else
+        echo '[emulators] No saved data found — starting fresh';
+      fi &&
       npx -y firebase-tools@latest emulators:start
       --project spartacus-artes-marciais
-      --only firestore,auth,storage,functions,pubsub,eventarc"
+      --only firestore,auth,storage,functions,pubsub,eventarc
+      --export-on-exit /app/emulator-data
+      $$IMPORT_FLAG"
     ports:
       - "4000:4000"   # Emulator UI
       - "5001:5001"   # Functions
@@ -40,6 +49,7 @@ services:
       - ./functions/send_email:/app/functions/send_email
       - ./functions/orchestrator:/app/functions/orchestrator
       - ./functions/send_push:/app/functions/send_push
+      - ./emulator-data:/app/emulator-data
     environment:
       - GOOGLE_CLOUD_PROJECT=spartacus-artes-marciais
       - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
