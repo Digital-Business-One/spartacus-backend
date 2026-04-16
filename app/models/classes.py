@@ -25,6 +25,8 @@ class ClassOut(BaseModel):
     location: Optional[str] = None
     age_range: Optional[AgeRange] = None
     icon_url: Optional[str] = None
+    active: bool = True
+    student_count: int = 0
 
 
 class ClassesResponse(BaseModel):

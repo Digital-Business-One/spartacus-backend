@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from firebase_admin import firestore
 
 from app.logging.decorator import log
@@ -37,8 +37,13 @@ def get_my_classes(
 @log
 @router.get("/{project_id}/classes")
 @public
-def list_classes(project_id: str) -> ClassesResponse:
-    classes = ClassService().list_by_project(project_id)
+def list_classes(
+    project_id: str,
+    include_inactive: bool = Query(False, alias="includeInactive"),
+) -> ClassesResponse:
+    classes = ClassService().list_by_project(
+        project_id, include_inactive=include_inactive
+    )
     return ClassesResponse(classes=classes)
 
 
@@ -62,9 +67,26 @@ def update_class(project_id: str, class_id: str, data: ClassUpdate) -> ClassOut:
 
 
 @log
-@router.delete("/{project_id}/classes/{class_id}", status_code=204)
+@router.post("/{project_id}/classes/{class_id}/reactivate")
 @require_roles("owner", "assistant")
-def deactivate_class(project_id: str, class_id: str):
+def reactivate_class(project_id: str, class_id: str) -> dict:
+    """Mark an inactive class as active again."""
     _assert_project(project_id)
-    if not ClassService().deactivate(project_id, class_id):
+    if not ClassService().reactivate(project_id, class_id):
         raise HTTPException(status_code=404, detail="Turma não encontrada")
+    return {"status": "reactivated"}
+
+
+@log
+@router.delete("/{project_id}/classes/{class_id}")
+@require_roles("owner", "assistant")
+def delete_class(project_id: str, class_id: str) -> dict:
+    """
+    Delete a class if it has no enrolled students; otherwise mark as inactive.
+    Returns {"status": "deleted"} or {"status": "deactivated"}.
+    """
+    _assert_project(project_id)
+    result = ClassService().delete_or_deactivate(project_id, class_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Turma não encontrada")
+    return {"status": result}
