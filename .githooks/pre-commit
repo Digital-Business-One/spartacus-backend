@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# pre-commit hook — runs ruff lint on staged Python files
+set -e
+
+STAGED_PY=$(git diff --cached --name-only --diff-filter=ACMR -- '*.py' | head -1)
+if [ -n "$STAGED_PY" ]; then
+  echo "🔍 [backend] ruff check..."
+  uv run ruff check app/
+fi
+
+echo "✅ [backend] pre-commit passed"

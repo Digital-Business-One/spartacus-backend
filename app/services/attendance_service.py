@@ -8,9 +8,13 @@ from firebase_admin import firestore
 
 from app.logging.decorator import log
 from app.models.attendance import (
+    AttendanceActionOut,
+    AttendanceDashboardOut,
     AttendanceHistoryOut,
     AttendanceRecord,
+    ClassBriefOut,
     MonthSummary,
+    StudentAttendanceCard,
 )
 
 _TZ_OFFSET = timezone(timedelta(hours=-4))  # Brasnorte-MT = UTC-4
@@ -444,3 +448,336 @@ class AttendanceService:
                 status_code=403,
                 detail="Você não é responsável deste dependente",
             )
+
+    # ── RFC-14: Dashboard de frequência ──────────────────────────────────
+
+    @log
+    def list_today_for_class(
+        self, project_id: str, class_id: str,
+    ) -> AttendanceDashboardOut:
+        """Aggregate today's roster + attendance docs for a class.
+
+        Returns students enrolled in the class with their current attendance
+        status for today's scheduled aula. Students without any attendance
+        doc appear as `status="absent"`.
+        """
+        db = firestore.client()
+        today = datetime.now(_TZ_OFFSET).date()
+        iso_date = today.isoformat()
+
+        class_doc = db.collection(self._CLASSES).document(class_id).get()
+        if (
+            not class_doc.exists
+            or class_doc.to_dict().get("projectId") != project_id
+        ):
+            raise HTTPException(
+                status_code=404, detail="Turma não encontrada",
+            )
+        class_data = class_doc.to_dict()
+
+        # Resolve today's scheduled slot, if any
+        schedule_items = class_data.get("schedule") or []
+        today_code = {
+            0: "mon", 1: "tue", 2: "wed", 3: "thu",
+            4: "fri", 5: "sat", 6: "sun",
+        }[today.weekday()]
+        today_slot: dict | None = None
+        for s in schedule_items:
+            if isinstance(s, dict) and s.get("day") == today_code:
+                today_slot = s
+                break
+
+        aula_id: str | None = None
+        if today_slot:
+            start = today_slot.get("startTime", "")
+            ymd = today.strftime("%Y%m%d")
+            hhmm = start.replace(":", "")
+            aula_id = f"{class_id}_{ymd}_{hhmm}"
+
+        # Modality name
+        modality_id = class_data.get("modalityId", "")
+        modality_name = class_data.get("modality", "")
+        if modality_id:
+            mod_doc = (
+                db.collection(self._MODALITIES).document(modality_id).get()
+            )
+            if mod_doc.exists:
+                modality_name = mod_doc.to_dict().get("name", modality_name)
+
+        class_brief = ClassBriefOut(
+            id=class_id,
+            name=class_data.get("name", ""),
+            modality_id=modality_id,
+            modality_name=modality_name,
+            teacher_name=class_data.get("teacherName"),
+            start_time=today_slot.get("startTime") if today_slot else None,
+            end_time=today_slot.get("endTime") if today_slot else None,
+            total_slots=int(class_data.get("totalSlots", 0) or 0),
+            enrolled_count=0,  # filled below
+        )
+
+        # Enrolled users: query users where classIds contains class_id
+        user_docs = list(
+            db.collection(self._USERS)
+            .where("projectId", "==", project_id)
+            .where("classIds", "array_contains", class_id)
+            .stream()
+        )
+
+        # Today's attendance docs for this aula (if aula resolved)
+        att_by_user: dict[str, dict] = {}
+        if aula_id:
+            att_query = (
+                db.collection(self._ATTENDANCE)
+                .where("projectId", "==", project_id)
+                .where("aulaId", "==", aula_id)
+            )
+            for doc in att_query.stream():
+                data = doc.to_dict()
+                att_by_user[data.get("userId", "")] = {
+                    "id": doc.id,
+                    **data,
+                }
+
+        students: list[StudentAttendanceCard] = []
+        for u in user_docs:
+            ud = u.to_dict()
+            uid = u.id
+            att = att_by_user.get(uid)
+            status = "absent"
+            attendance_id: str | None = None
+            source: str | None = None
+            registered_at: str | None = None
+            confirmed_at: str | None = None
+            if att:
+                raw_status = att.get("status", "")
+                if raw_status == "confirmed":
+                    status = "confirmed"
+                elif raw_status == "registered":
+                    status = "registered"
+                elif raw_status == "rejected":
+                    # Rejected → appears as absent in UI
+                    status = "absent"
+                attendance_id = att.get("id")
+                source = att.get("source")
+                registered_at = att.get("timestamp")
+                confirmed_at = att.get("validatedAt")
+
+            age = _calc_age(ud.get("birthDate"))
+            students.append(
+                StudentAttendanceCard(
+                    user_id=uid,
+                    name=ud.get("name", ""),
+                    initials=_initials(ud.get("name", "")),
+                    age=age,
+                    age_category=ud.get("ageCategory"),
+                    photo_url=ud.get("photoUrl"),
+                    roles=ud.get("roles", []) or [],
+                    is_dependent=bool(ud.get("guardianUid")),
+                    guardian_uid=ud.get("guardianUid"),
+                    guardian_name=ud.get("guardianName"),
+                    status=status,
+                    attendance_id=attendance_id,
+                    source=source,
+                    registered_at=registered_at,
+                    confirmed_at=confirmed_at,
+                )
+            )
+
+        class_brief.enrolled_count = len(students)
+        students.sort(key=lambda s: s.name.lower())
+
+        return AttendanceDashboardOut(
+            class_info=class_brief,
+            aula_id=aula_id,
+            date=iso_date,
+            students=students,
+        )
+
+    @log
+    def confirm_attendance(
+        self,
+        project_id: str,
+        class_id: str,
+        user_id: str,
+        actor_uid: str,
+        source: str = "manual",
+        aula_id: str | None = None,
+    ) -> AttendanceActionOut:
+        """Mark attendance as confirmed for today. Creates doc if missing."""
+        db = firestore.client()
+        now = datetime.now(_TZ_OFFSET)
+        now_iso = now.isoformat()
+
+        resolved_aula_id = aula_id or self._resolve_today_aula_id(
+            db, project_id, class_id, now.date(),
+        )
+        if not resolved_aula_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Sem aula agendada para hoje nessa turma",
+            )
+
+        self._ensure_aula(
+            db, project_id, class_id, resolved_aula_id, now,
+        )
+
+        # Find existing attendance doc for this user/aula
+        existing = list(
+            db.collection(self._ATTENDANCE)
+            .where("projectId", "==", project_id)
+            .where("aulaId", "==", resolved_aula_id)
+            .where("userId", "==", user_id)
+            .limit(1)
+            .stream()
+        )
+
+        if existing:
+            ref = existing[0].reference
+            ref.update({
+                "status": "confirmed",
+                "validatedBy": actor_uid,
+                "validatedAt": now_iso,
+                "source": source,
+            })
+            return AttendanceActionOut(
+                status="confirmed", attendance_id=ref.id,
+            )
+
+        user_doc = db.collection(self._USERS).document(user_id).get()
+        user_name = (
+            user_doc.to_dict().get("name", "") if user_doc.exists else ""
+        )
+        class_doc = db.collection(self._CLASSES).document(class_id).get()
+        class_name = (
+            class_doc.to_dict().get("name", "") if class_doc.exists else ""
+        )
+
+        _, ref = db.collection(self._ATTENDANCE).add({
+            "projectId": project_id,
+            "userId": user_id,
+            "userName": user_name,
+            "aulaId": resolved_aula_id,
+            "turmaId": class_id,
+            "turmaName": class_name,
+            "timestamp": now_iso,
+            "status": "confirmed",
+            "validatedBy": actor_uid,
+            "validatedAt": now_iso,
+            "source": source,
+        })
+
+        return AttendanceActionOut(
+            status="confirmed", attendance_id=ref.id,
+        )
+
+    @log
+    def reject_attendance(
+        self,
+        project_id: str,
+        class_id: str,
+        user_id: str,
+        actor_uid: str,
+        reason: str | None = None,
+        aula_id: str | None = None,
+    ) -> AttendanceActionOut:
+        """Reject a registered check-in. Card returns to 'Ausente' column."""
+        db = firestore.client()
+        now = datetime.now(_TZ_OFFSET)
+        now_iso = now.isoformat()
+
+        resolved_aula_id = aula_id or self._resolve_today_aula_id(
+            db, project_id, class_id, now.date(),
+        )
+        if not resolved_aula_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Sem aula agendada para hoje nessa turma",
+            )
+
+        existing = list(
+            db.collection(self._ATTENDANCE)
+            .where("projectId", "==", project_id)
+            .where("aulaId", "==", resolved_aula_id)
+            .where("userId", "==", user_id)
+            .limit(1)
+            .stream()
+        )
+
+        if not existing:
+            raise HTTPException(
+                status_code=404,
+                detail="Registro de frequência não encontrado",
+            )
+
+        ref = existing[0].reference
+        ref.update({
+            "status": "rejected",
+            "validatedBy": actor_uid,
+            "validatedAt": now_iso,
+            "rejectionReason": reason or "",
+        })
+        return AttendanceActionOut(
+            status="rejected", attendance_id=ref.id,
+        )
+
+    def _resolve_today_aula_id(
+        self, db, project_id: str, class_id: str, today: date,
+    ) -> str | None:
+        class_doc = db.collection(self._CLASSES).document(class_id).get()
+        if (
+            not class_doc.exists
+            or class_doc.to_dict().get("projectId") != project_id
+        ):
+            return None
+        schedule = class_doc.to_dict().get("schedule") or []
+        today_code = {
+            0: "mon", 1: "tue", 2: "wed", 3: "thu",
+            4: "fri", 5: "sat", 6: "sun",
+        }[today.weekday()]
+        for s in schedule:
+            if isinstance(s, dict) and s.get("day") == today_code:
+                start = s.get("startTime", "").replace(":", "")
+                return f"{class_id}_{today.strftime('%Y%m%d')}_{start}"
+        return None
+
+    def _ensure_aula(
+        self, db, project_id: str, class_id: str,
+        aula_id: str, now: datetime,
+    ) -> None:
+        ref = db.collection("aulas").document(aula_id)
+        if ref.get().exists:
+            return
+        ref.set({
+            "projectId": project_id,
+            "turmaId": class_id,
+            "startTime": now.isoformat(),
+            "endTime": now.isoformat(),
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        })
+
+
+def _initials(name: str) -> str:
+    parts = [p for p in (name or "").strip().split() if p]
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
+
+
+def _calc_age(birth_date: str | None) -> int | None:
+    if not birth_date:
+        return None
+    try:
+        parts = birth_date.split("/")
+        if len(parts) != 3:
+            return None
+        d, m, y = (int(p) for p in parts)
+        today = datetime.now(_TZ_OFFSET).date()
+        age = today.year - y
+        if (today.month, today.day) < (m, d):
+            age -= 1
+        return age
+    except (ValueError, TypeError):
+        return None
