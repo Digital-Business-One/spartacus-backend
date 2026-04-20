@@ -127,8 +127,8 @@ class AttendanceService:
                 if not doc.exists:
                     continue
                 data = doc.to_dict()
-                if not data.get("active", True):
-                    continue
+                # Include inactive classes in history — historical attendance
+                # should remain visible even after a class is deactivated.
 
                 modality_name = self._resolve_modality(db, data)
                 class_id = doc.id
@@ -274,7 +274,44 @@ class AttendanceService:
         Records are sorted newest-first.
         """
         if not schedule_items:
-            return [], 0, 0
+            # No schedule = show only actual attendance docs (orphaned records)
+            orphaned: list[AttendanceRecord] = []
+            orphaned_attended = 0
+            for dt, recs in sorted(
+                attendance_by_date.items(), reverse=True
+            ):
+                if dt.year != year or dt.month != month:
+                    continue
+                for r in recs:
+                    d = dt.day
+                    s_raw = r.get("status", "registered")
+                    if s_raw in ("confirmed", "registered"):
+                        orphaned_attended += 1
+                    orphaned.append(
+                        AttendanceRecord(
+                            id=r.get("_id", f"{year}-{month:02d}-{d:02d}"),
+                            date=f"{d:02d} de {_MONTH_NAMES_PT[month]}",
+                            date_sort=f"{year}-{month:02d}-{d:02d}",
+                            time=AttendanceService._extract_time(
+                                r.get("timestamp", "")
+                            ),
+                            class_id=r.get("turmaId", ""),
+                            class_name=r.get("turmaName", ""),
+                            modality_name="",
+                            teacher_name=r.get("teacherName"),
+                            status=s_raw,
+                            status_label={
+                                "confirmed": "Confirmado",
+                                "registered": "Aguardando confirmação",
+                                "absent": "Não confirmado",
+                                "absent_justified": "Falta Justificada",
+                                "rejected": "Rejeitado",
+                            }.get(s_raw, s_raw),
+                            validated_by=r.get("validatedBy"),
+                            validated_at=r.get("validatedAt"),
+                        )
+                    )
+            return orphaned, orphaned_attended, max(len(orphaned), 0)
 
         days_in_month = cal.monthrange(year, month)[1]
         last_day = (

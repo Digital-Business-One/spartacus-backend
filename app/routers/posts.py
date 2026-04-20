@@ -1,6 +1,11 @@
 """Posts router — CRUD for timeline posts (RFC-11)."""
 
-from fastapi import APIRouter, HTTPException
+import os
+import uuid
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException, UploadFile
+from firebase_admin import storage
 
 from app.events import publisher
 from app.logging.decorator import log
@@ -8,6 +13,18 @@ from app.models.post import PostCreate, PostOut, PostUpdate
 from app.security.context import auth_ctx
 from app.security.decorator import require_roles
 from app.services.post_service import PostService
+
+_UPLOAD_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+_ALLOWED_MEDIA = {
+    "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp",
+    "video/mp4", "video/quicktime", "video/webm",
+    "audio/mpeg", "audio/mp4", "audio/wav", "audio/webm", "audio/ogg",
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
 
 router = APIRouter(prefix="/posts", tags=["posts"])
 
@@ -56,6 +73,55 @@ def update_post(post_id: str, data: PostUpdate) -> PostOut:
     if event:
         publisher.publish(event, project_id=ctx.project_id, source="post_service")
     return result
+
+
+@log
+@router.post("/upload")
+@require_roles("social")
+async def upload_attachment(file: UploadFile) -> dict:
+    """Upload a media file for a post attachment. Returns URL + metadata."""
+    ctx = auth_ctx.get()
+
+    content_type = (file.content_type or "").lower()
+    if content_type == "image/jpg":
+        content_type = "image/jpeg"
+    if content_type not in _ALLOWED_MEDIA:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de arquivo não permitido: {content_type}",
+        )
+
+    contents = await file.read()
+    if len(contents) > _UPLOAD_MAX_SIZE:
+        raise HTTPException(status_code=400, detail="Arquivo muito grande (max 10 MB)")
+
+    ext = (file.filename or "file").rsplit(".", 1)[-1] if file.filename else "bin"
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    blob_name = f"posts/{ctx.user_id}/{ts}_{uuid.uuid4().hex[:8]}.{ext}"
+
+    bucket_name = os.getenv(
+        "FIREBASE_STORAGE_BUCKET",
+        "spartacus-artes-marciais.firebasestorage.app",
+    )
+    bucket = storage.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    blob.upload_from_string(contents, content_type=content_type)
+    blob.make_public()
+
+    # Classify for the AttachmentIn.type field
+    if content_type.startswith("image"):
+        att_type = "image"
+    elif content_type.startswith("audio"):
+        att_type = "voice"
+    else:
+        att_type = "file"
+
+    return {
+        "type": att_type,
+        "url": blob.public_url,
+        "name": file.filename or f"attachment.{ext}",
+        "size": len(contents),
+    }
 
 
 @log

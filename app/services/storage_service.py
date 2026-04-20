@@ -8,7 +8,7 @@ from PIL import Image
 from app.logging.decorator import log
 
 _MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
-_ALLOWED_TYPES = {"image/jpeg", "image/png"}
+_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/jpg"}
 _MIN_DIMENSION = 200
 _TARGET_SIZE = (400, 400)
 _JPEG_QUALITY = 80
