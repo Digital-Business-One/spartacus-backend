@@ -31,21 +31,21 @@ _ADMIN_CLAIMS = {
 def _mock_no_existing():
     """DB with no existing donation this month."""
     mock_db = MagicMock()
-    doacoes = MagicMock()
-    q = doacoes.where.return_value
+    donations = MagicMock()
+    q = donations.where.return_value
     q = q.where.return_value.where.return_value
     q.limit.return_value.stream.return_value = []
     mock_ref = MagicMock()
     mock_ref.id = "don_123"
-    doacoes.add.return_value = (None, mock_ref)
-    mock_db.collection.return_value = doacoes
+    donations.add.return_value = (None, mock_ref)
+    mock_db.collection.return_value = donations
     return mock_db
 
 
 def _mock_existing():
     """DB with existing donation this month."""
     mock_db = MagicMock()
-    doacoes = MagicMock()
+    donations = MagicMock()
     existing = MagicMock()
     existing.id = "don_existing"
     existing.to_dict.return_value = {
@@ -55,10 +55,10 @@ def _mock_existing():
         "status": "pledged",
         "createdAt": "2026-03-15T10:00:00Z",
     }
-    q = doacoes.where.return_value
+    q = donations.where.return_value
     q = q.where.return_value.where.return_value
     q.limit.return_value.stream.return_value = [existing]
-    mock_db.collection.return_value = doacoes
+    mock_db.collection.return_value = donations
     return mock_db
 
 

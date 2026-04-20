@@ -12,16 +12,16 @@ from app.services.validation_service import ValidationService
 router = APIRouter(tags=["validation"])
 
 
-# ─── Presença ─────────────────────────────────────────────────────────────────
+# ─── Attendance ───────────────────────────────────────────────────────────────
 
 @log
-@router.patch("/presencas/{doc_id}/validate")
+@router.patch("/attendance/{doc_id}/validate")
 @require_roles("owner", "assistant", "teacher", "instructor")
-def validate_presenca(doc_id: str, body: ValidateRequest):
+def validate_attendance(doc_id: str, body: ValidateRequest):
     ctx = auth_ctx.get()
     try:
         event = ValidationService().validate(
-            collection="presencas",
+            collection="attendance",
             doc_id=doc_id,
             project_id=ctx.project_id,
             status=body.status,
@@ -37,12 +37,12 @@ def validate_presenca(doc_id: str, body: ValidateRequest):
 
 
 @log
-@router.post("/presencas/{doc_id}/request-review")
-def request_review_presenca(doc_id: str):
+@router.post("/attendance/{doc_id}/request-review")
+def request_review_attendance(doc_id: str):
     ctx = auth_ctx.get()
     try:
         event = ValidationService().request_review(
-            collection="presencas",
+            collection="attendance",
             doc_id=doc_id,
             project_id=ctx.project_id,
             actor_uid=ctx.user_id,
@@ -59,13 +59,13 @@ def request_review_presenca(doc_id: str):
 
 
 @log
-@router.patch("/presencas/{doc_id}/resolve-review")
+@router.patch("/attendance/{doc_id}/resolve-review")
 @require_roles("owner", "assistant", "teacher", "instructor")
-def resolve_review_presenca(doc_id: str):
+def resolve_review_attendance(doc_id: str):
     ctx = auth_ctx.get()
     try:
         ValidationService().resolve_review(
-            collection="presencas",
+            collection="attendance",
             doc_id=doc_id,
             project_id=ctx.project_id,
             actor_uid=ctx.user_id,
@@ -78,16 +78,16 @@ def resolve_review_presenca(doc_id: str):
     return {"status": "ok"}
 
 
-# ─── Doações ──────────────────────────────────────────────────────────────────
+# ─── Donations ────────────────────────────────────────────────────────────────
 
 @log
-@router.patch("/doacoes/{doc_id}/validate")
+@router.patch("/donations/{doc_id}/validate")
 @require_roles("owner", "assistant", "teacher", "instructor")
-def validate_doacao(doc_id: str, body: ValidateRequest):
+def validate_donation(doc_id: str, body: ValidateRequest):
     ctx = auth_ctx.get()
     try:
         event = ValidationService().validate(
-            collection="doacoes",
+            collection="donations",
             doc_id=doc_id,
             project_id=ctx.project_id,
             status=body.status,
@@ -103,12 +103,12 @@ def validate_doacao(doc_id: str, body: ValidateRequest):
 
 
 @log
-@router.post("/doacoes/{doc_id}/request-review")
-def request_review_doacao(doc_id: str):
+@router.post("/donations/{doc_id}/request-review")
+def request_review_donation(doc_id: str):
     ctx = auth_ctx.get()
     try:
         event = ValidationService().request_review(
-            collection="doacoes",
+            collection="donations",
             doc_id=doc_id,
             project_id=ctx.project_id,
             actor_uid=ctx.user_id,
@@ -125,13 +125,13 @@ def request_review_doacao(doc_id: str):
 
 
 @log
-@router.patch("/doacoes/{doc_id}/resolve-review")
+@router.patch("/donations/{doc_id}/resolve-review")
 @require_roles("owner", "assistant", "teacher", "instructor")
-def resolve_review_doacao(doc_id: str):
+def resolve_review_donation(doc_id: str):
     ctx = auth_ctx.get()
     try:
         ValidationService().resolve_review(
-            collection="doacoes",
+            collection="donations",
             doc_id=doc_id,
             project_id=ctx.project_id,
             actor_uid=ctx.user_id,

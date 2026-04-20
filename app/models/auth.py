@@ -40,6 +40,7 @@ class DependentIn(BaseModel):
     gender: Literal["male", "female"]
     tax_id: Optional[str] = Field(default=None)
     class_ids: list[str] = Field(default_factory=list)
+    guardian_relationship: Optional[str] = Field(default=None)
 
     @field_validator("name")
     @classmethod

@@ -15,6 +15,7 @@ from app.models.donation import (
     DonationHistoryOut,
     DonationOut,
 )
+from app.services.account_history_service import AccountHistoryService
 
 
 def _current_month() -> str:
@@ -22,7 +23,7 @@ def _current_month() -> str:
 
 
 class DonationService:
-    _DOACOES = "doacoes"
+    _DONATIONS = "donations"
     _PROJECTS = "projects"
 
     @log
@@ -42,7 +43,7 @@ class DonationService:
 
         # Check duplicate
         existing = list(
-            db.collection(self._DOACOES)
+            db.collection(self._DONATIONS)
             .where("projectId", "==", project_id)
             .where("userId", "==", target_uid)
             .where("month", "==", month)
@@ -69,7 +70,44 @@ class DonationService:
             "receivedBy": None,
         }
 
-        _, ref = db.collection(self._DOACOES).add(doc_data)
+        _, ref = db.collection(self._DONATIONS).add(doc_data)
+
+        # Resolve user name for event payload
+        user_doc = db.collection("users").document(target_uid).get()
+        user_name = ""
+        if user_doc.exists:
+            user_name = user_doc.to_dict().get("name", "")
+
+        item_label = ITEM_LABELS.get(data.item, data.item)
+        desc = data.item_description or ""
+        amount = f"{item_label}: {desc}" if desc else item_label
+
+        # Record in history
+        AccountHistoryService().record(
+            uid=target_uid,
+            project_id=project_id,
+            event_type="donation",
+            event_subtype="pledged",
+            actor_uid=uid,
+            actor_name=user_name,
+            actor_roles=[],
+            description=f"Doação registrada: {amount}",
+        )
+
+        event = DomainEvent(
+            id="donation.registered",
+            payload=DonationRegisteredPayload(
+                entity_id=ref.id,
+                source_entity_ref=f"donations/{ref.id}",
+                source_entity_type="donations",
+                target_uid=target_uid,
+                target_name=user_name,
+                author_uid=uid,
+                author_name=user_name,
+                donation_amount=amount,
+                donation_date=month,
+            ),
+        )
 
         # Resolve user name for event payload
         user_doc = db.collection("users").document(target_uid).get()
@@ -121,7 +159,7 @@ class DonationService:
         month = _current_month()
 
         results = list(
-            db.collection(self._DOACOES)
+            db.collection(self._DONATIONS)
             .where("projectId", "==", project_id)
             .where("userId", "==", target_uid)
             .where("month", "==", month)
@@ -153,15 +191,37 @@ class DonationService:
         project_id: str,
         uid: str,
         acting_as: str | None = None,
+        year: int | None = None,
     ) -> DonationHistoryOut:
         target_uid = acting_as or uid
         if acting_as:
             self._assert_guardian(uid, target_uid)
 
+        return self._get_history_for(project_id, target_uid, year)
+
+    @log
+    def get_history_admin(
+        self,
+        project_id: str,
+        target_uid: str,
+        year: int | None = None,
+    ) -> DonationHistoryOut:
+        """Staff version of get_history (no guardian check). RFC-12.
+
+        Authorization is enforced upstream (owner/assistant only).
+        """
+        return self._get_history_for(project_id, target_uid, year)
+
+    def _get_history_for(
+        self,
+        project_id: str,
+        target_uid: str,
+        year: int | None = None,
+    ) -> DonationHistoryOut:
         db = firestore.client()
 
         results = list(
-            db.collection(self._DOACOES)
+            db.collection(self._DONATIONS)
             .where("projectId", "==", project_id)
             .where("userId", "==", target_uid)
             .stream()
@@ -174,12 +234,40 @@ class DonationService:
             month_str = data.get("month", "")
             by_month[month_str] = (doc.id, data)
 
-        # Build list for last 6 months, filling gaps as "pending"
-        now = datetime.now(timezone.utc)
-        items: list[DonationHistoryItem] = []
+        # Resolve receivedBy uids → names in batch
+        receiver_uids = {
+            d.get("receivedBy")
+            for _, d in by_month.values()
+            if d.get("receivedBy")
+        }
+        names: dict[str, str] = {}
+        if receiver_uids:
+            refs = [
+                db.collection("users").document(u)
+                for u in receiver_uids
+            ]
+            for udoc in db.get_all(refs):
+                if udoc.exists:
+                    names[udoc.id] = udoc.to_dict().get("name", "")
 
-        y, m = now.year, now.month
-        for _ in range(6):
+        # Build list for the year (or last 6 months when no year filter)
+        items: list[DonationHistoryItem] = []
+        if year is not None:
+            month_keys = [
+                (year, m) for m in range(12, 0, -1)
+            ]
+        else:
+            now = datetime.now(timezone.utc)
+            y, m = now.year, now.month
+            month_keys = []
+            for _ in range(6):
+                month_keys.append((y, m))
+                m -= 1
+                if m == 0:
+                    m = 12
+                    y -= 1
+
+        for y, m in month_keys:
             key = f"{y}-{m:02d}"
             month_label = self._format_month_label(key)
 
@@ -190,32 +278,35 @@ class DonationService:
                 created_at = data.get("createdAt", "")
                 created_label = self._format_created_date(created_at)
                 status_label = (
-                    "Entregue" if status == "received" else "Pendente"
+                    "Validado" if status == "received" else "Aguardando"
                 )
+                received_by = data.get("receivedBy")
                 items.append(DonationHistoryItem(
                     id=doc_id,
                     month=key,
                     month_label=month_label,
+                    item=item_code,
                     item_label=ITEM_LABELS.get(item_code, item_code),
+                    item_description=data.get("itemDescription"),
                     status=status,
                     status_label=status_label,
                     created_at=created_label,
+                    received_by=received_by,
+                    received_by_name=names.get(received_by) if received_by else None,
+                    received_at=data.get("receivedAt"),
                 ))
             else:
                 items.append(DonationHistoryItem(
                     id=f"pending_{key}",
                     month=key,
                     month_label=month_label,
+                    item=None,
                     item_label="",
+                    item_description=None,
                     status="pending",
                     status_label="Pendente",
                     created_at="Ainda não registrado",
                 ))
-
-            m -= 1
-            if m == 0:
-                m = 12
-                y -= 1
 
         return DonationHistoryOut(donations=items)
 

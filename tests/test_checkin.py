@@ -109,9 +109,9 @@ class TestDoCheckin:
         users_col = MagicMock()
         aulas_col = MagicMock()
         aulas_col.document.return_value.get.return_value = aula
-        presencas_col = MagicMock()
-        # Return 1 existing presenca = duplicate
-        q = presencas_col.where.return_value
+        attendance_col = MagicMock()
+        # Return 1 existing attendance record = duplicate
+        q = attendance_col.where.return_value
         q = q.where.return_value.where.return_value
         q.limit.return_value.stream.return_value = [MagicMock()]
 
@@ -120,8 +120,8 @@ class TestDoCheckin:
                 return users_col
             if name == "aulas":
                 return aulas_col
-            if name == "presencas":
-                return presencas_col
+            if name == "attendance":
+                return attendance_col
             return MagicMock()
 
         mock_db.collection.side_effect = col_side
@@ -165,19 +165,19 @@ class TestDoCheckin:
         aulas_col = MagicMock()
         aulas_col.document.return_value.get.return_value = aula
 
-        presencas_col = MagicMock()
-        q = presencas_col.where.return_value
+        attendance_col = MagicMock()
+        q = attendance_col.where.return_value
         q = q.where.return_value.where.return_value
         q.limit.return_value.stream.return_value = []
         mock_ref = MagicMock()
-        mock_ref.id = "presenca_123"
-        presencas_col.add.return_value = (None, mock_ref)
+        mock_ref.id = "attendance_123"
+        attendance_col.add.return_value = (None, mock_ref)
 
         def col_side(name):
             if name == "aulas":
                 return aulas_col
-            if name == "presencas":
-                return presencas_col
+            if name == "attendance":
+                return attendance_col
             return MagicMock()
 
         mock_db.collection.side_effect = col_side
@@ -195,5 +195,5 @@ class TestDoCheckin:
 
         assert r.status_code == 201
         data = r.json()
-        assert data["status"] == "REGISTERED"
-        assert data["presencaId"] == "presenca_123"
+        assert data["status"] == "registered"
+        assert data["attendanceId"] == "attendance_123"

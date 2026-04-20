@@ -161,6 +161,19 @@ class MedicalHistoryService:
             )
 
     @log
+    def get_admin(
+        self, project_id: str, user_id: str,
+    ) -> MedicalHistoryOut:
+        """Read medical history for a user — staff version (no guardian check).
+
+        Authorization is enforced upstream by the router (owner/assistant only).
+        """
+        result = self.get(project_id, user_id)
+        if result is None:
+            raise LookupError("Anamnese não encontrada")
+        return result
+
+    @log
     def get(
         self, project_id: str, user_id: str
     ) -> Optional[MedicalHistoryOut]:

@@ -184,6 +184,16 @@ class ProfileService:
     # ── Dependents ───────────────────────────────────────────────────────
 
     @log
+    @log
+    def get_dependents_admin(
+        self, project_id: str, guardian_uid: str,
+    ) -> list[DependentOut]:
+        """Staff version of list_dependents (no self check). RFC-12.
+
+        Authorization is enforced upstream (owner/assistant only).
+        """
+        return self.list_dependents(project_id, guardian_uid)
+
     def list_dependents(
         self,
         project_id: str,

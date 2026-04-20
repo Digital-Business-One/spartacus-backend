@@ -65,9 +65,9 @@ class AbsenceJobService:
                     if turma_id in user_classes or not user_classes:
                         student_uids.append(m_data["userId"])
 
-            # Find students who already have a presenca for this aula
+            # Find students who already have an attendance record for this aula
             existing = (
-                db.collection("presencas")
+                db.collection("attendance")
                 .where("projectId", "==", project_id)
                 .where("aulaId", "==", aula_id)
                 .stream()
@@ -85,7 +85,7 @@ class AbsenceJobService:
                 user_name = user_data.get("name", "")
 
                 absence_now = datetime.now(timezone.utc).isoformat()
-                _, presenca_ref = db.collection("presencas").add({
+                _, attendance_ref = db.collection("attendance").add({
                     "projectId": project_id,
                     "userId": uid,
                     "userName": user_name,
@@ -106,9 +106,9 @@ class AbsenceJobService:
                     DomainEvent(
                         id="checkin.absent",
                         payload=CheckinRegisteredPayload(
-                            entity_id=presenca_ref.id,
-                            source_entity_ref=f"presencas/{presenca_ref.id}",
-                            source_entity_type="presencas",
+                            entity_id=attendance_ref.id,
+                            source_entity_ref=f"attendance/{attendance_ref.id}",
+                            source_entity_type="attendance",
                             target_uid=uid,
                             target_name=user_name,
                             author_uid="system",

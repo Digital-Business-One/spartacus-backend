@@ -80,7 +80,7 @@ def _resolve_modality_names(
 
 
 def _doc_to_class_out(
-    doc, modality_names: dict[str, str]
+    doc, modality_names: dict[str, str], student_count: int = 0
 ) -> ClassOut:
     data = doc.to_dict()
     age_range_data = data.get("ageRange")
@@ -115,21 +115,46 @@ def _doc_to_class_out(
         location=data.get("location"),
         age_range=age_range,
         icon_url=data.get("iconUrl"),
+        active=data.get("active", True),
+        student_count=student_count,
     )
+
+
+def _count_students_by_class(db, class_ids: set[str]) -> dict[str, int]:
+    """Return map of class_id -> number of users that have it in their classIds."""
+    counts: dict[str, int] = {cid: 0 for cid in class_ids}
+    if not class_ids:
+        return counts
+    # array-contains-any supports up to 30 values; chunk just in case
+    ids = list(class_ids)
+    for i in range(0, len(ids), 30):
+        chunk = ids[i : i + 30]
+        docs = (
+            db.collection("users")
+            .where("classIds", "array_contains_any", chunk)
+            .stream()
+        )
+        for doc in docs:
+            for cid in doc.to_dict().get("classIds", []):
+                if cid in counts:
+                    counts[cid] += 1
+    return counts
 
 
 class ClassService:
     _COLLECTION = "classes"
 
     @log
-    def list_by_project(self, project_id: str) -> list[ClassOut]:
+    def list_by_project(
+        self, project_id: str, include_inactive: bool = False
+    ) -> list[ClassOut]:
         db = firestore.client()
-        docs = list(
-            db.collection(self._COLLECTION)
-            .where("projectId", "==", project_id)
-            .where("active", "==", True)
-            .stream()
+        query = db.collection(self._COLLECTION).where(
+            "projectId", "==", project_id
         )
+        if not include_inactive:
+            query = query.where("active", "==", True)
+        docs = list(query.stream())
 
         modality_ids = {
             d.to_dict().get("modalityId", "")
@@ -138,7 +163,13 @@ class ClassService:
         }
         modality_names = _resolve_modality_names(db, modality_ids)
 
-        return [_doc_to_class_out(doc, modality_names) for doc in docs]
+        class_ids = {doc.id for doc in docs}
+        counts = _count_students_by_class(db, class_ids) if include_inactive else {}
+
+        return [
+            _doc_to_class_out(doc, modality_names, counts.get(doc.id, 0))
+            for doc in docs
+        ]
 
     @log
     def create(self, project_id: str, data: ClassCreate) -> ClassOut:
@@ -235,11 +266,37 @@ class ClassService:
         return _doc_to_class_out(updated_doc, modality_names)
 
     @log
-    def deactivate(self, project_id: str, class_id: str) -> bool:
+    def reactivate(self, project_id: str, class_id: str) -> bool:
+        """Set active=True. Returns False if class doesn't exist in this project."""
         db = firestore.client()
         doc_ref = db.collection(self._COLLECTION).document(class_id)
         doc = doc_ref.get()
         if not doc.exists or doc.to_dict().get("projectId") != project_id:
             return False
-        doc_ref.update({"active": False})
+        doc_ref.update({"active": True})
         return True
+
+    @log
+    def delete_or_deactivate(
+        self, project_id: str, class_id: str
+    ) -> Optional[str]:
+        """
+        Hard-delete a class if it has no enrolled students; otherwise mark as
+        inactive. Returns:
+          - "deleted" if the document was removed
+          - "deactivated" if the class has students and was set active=False
+          - None if the class doesn't exist in this project
+        """
+        db = firestore.client()
+        doc_ref = db.collection(self._COLLECTION).document(class_id)
+        doc = doc_ref.get()
+        if not doc.exists or doc.to_dict().get("projectId") != project_id:
+            return None
+
+        counts = _count_students_by_class(db, {class_id})
+        if counts.get(class_id, 0) > 0:
+            doc_ref.update({"active": False})
+            return "deactivated"
+
+        doc_ref.delete()
+        return "deleted"

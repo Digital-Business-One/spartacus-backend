@@ -91,6 +91,9 @@ class AuthService:
             email_verified = True  # Google always verifies email
 
         now = datetime.now(timezone.utc).isoformat()
+        auth_provider = (
+            "google.com" if data.auth_method == "google" else "password"
+        )
 
         db.collection(self._USERS).document(uid).set(
             {
@@ -114,11 +117,32 @@ class AuthService:
                 "emailVerified": email_verified,
                 "isDependent": False,
                 "classIds": data.class_ids,
+                "authProvider": auth_provider,
                 "createdAt": now,
+                "updatedAt": now,
+                "lastUpdatedBy": uid,
             },
             merge=True,
         )
         self._create_membership(db, project_id, uid, data.roles, now)
+
+        # Record creation in history sub-collection
+        from app.services.account_history_service import AccountHistoryService
+        history_service = AccountHistoryService()
+        history_service.record(
+            uid=uid,
+            project_id=project_id,
+            event_type="creation",
+            event_subtype=auth_provider,
+            actor_uid=uid,
+            actor_name=data.name,
+            actor_roles=data.roles,
+            description=(
+                "Conta criada via Google"
+                if auth_provider == "google.com"
+                else "Conta criada via e-mail e senha"
+            ),
+        )
 
         for dep in data.dependents:
             dep_uid = f"{uid}_dep_{dep.id}"
@@ -129,14 +153,30 @@ class AuthService:
                     "gender": dep.gender,
                     "taxId": dep.tax_id,
                     "guardianUid": uid,
+                    "guardianRelationship": dep.guardian_relationship,
                     "approvalStatus": "pending_approval",
                     "isDependent": True,
                     "classIds": dep.class_ids,
+                    "authProvider": "guardian_created",
                     "createdAt": now,
+                    "updatedAt": now,
+                    "lastUpdatedBy": uid,
                 },
                 merge=True,
             )
             self._create_membership(db, project_id, dep_uid, ["student"], now)
+            history_service.record(
+                uid=dep_uid,
+                project_id=project_id,
+                event_type="creation",
+                event_subtype="guardian_created",
+                actor_uid=uid,
+                actor_name=data.name,
+                actor_roles=data.roles,
+                description=(
+                    f"Dependente criado por {data.name} (responsável)"
+                ),
+            )
 
         # Build signup details (shared by email and Google paths)
         details = self._build_signup_details(db, data)

@@ -41,7 +41,7 @@ class CheckinResponse(BaseModel):
         populate_by_name=True, alias_generator=to_camel,
     )
 
-    presenca_id: str
+    attendance_id: str
     status: str
     timestamp: str
 
