@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.logging.decorator import log
 from app.models.timeline import LinkPreviewResponse, TimelineFeedResponse
@@ -20,6 +20,7 @@ def get_feed(
     type: Optional[str] = Query(None, description="Filter by entry type"),
     cursor: Optional[str] = Query(None, description="Pagination cursor (createdAt)"),
     limit: int = Query(5, ge=1, le=50),
+    x_acting_as: Optional[str] = Header(None),
 ) -> TimelineFeedResponse:
     ctx = auth_ctx.get()
     entries, next_cursor = TimelineService().get_feed(
@@ -28,6 +29,7 @@ def get_feed(
         cursor=cursor,
         type_filter=type,
         limit=limit,
+        acting_as=x_acting_as,
     )
     return TimelineFeedResponse(entries=entries, next_cursor=next_cursor)
 

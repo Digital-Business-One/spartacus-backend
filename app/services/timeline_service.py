@@ -19,6 +19,7 @@ class TimelineService:
         cursor: str | None = None,
         type_filter: str | None = None,
         limit: int = 5,
+        acting_as: str | None = None,
     ) -> tuple[list[TimelineEntryOut], str | None]:
         db = firestore.client()
 
@@ -40,6 +41,8 @@ class TimelineService:
         my_dependents = self._get_dependents(db, user.user_id, project_id)
         is_staff = bool(set(user.roles) & STAFF_ROLES)
 
+        # When acting as a dependent, only show that dependent's entries
+
         visible = []
         last_created_at = None
 
@@ -49,6 +52,12 @@ class TimelineService:
 
             if not self._is_visible(entry, user.user_id, my_dependents, is_staff):
                 continue
+
+            # If acting as dependent, filter to only that dependent's entries
+            if acting_as:
+                target = entry.get("targetUid")
+                if target and target != acting_as:
+                    continue
 
             # Check if user liked this entry
             reaction_ref = (

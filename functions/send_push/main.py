@@ -13,14 +13,33 @@ RFC-11: Timeline Assíncrona via Arquitetura de Eventos.
 """
 
 import json
+import os
 import urllib.request
 from urllib.error import HTTPError, URLError
 
-import functions_framework
-from cloudevents.http import CloudEvent
-from firebase_admin import firestore, initialize_app
+import firebase_admin
+from firebase_admin import credentials as _creds
+from firebase_admin import firestore
+from firebase_functions import firestore_fn
 
-initialize_app()
+if os.environ.get("FUNCTIONS_EMULATOR"):
+    os.environ.setdefault("FIRESTORE_EMULATOR_HOST", "localhost:8080")
+    os.environ.setdefault("FIREBASE_AUTH_EMULATOR_HOST", "localhost:9099")
+
+    from google.auth.credentials import AnonymousCredentials
+
+    class _EmulatorCred(_creds.Base):
+        def get_credential(self):
+            return AnonymousCredentials()
+
+    firebase_admin.initialize_app(
+        credential=_EmulatorCred(),
+        options={"projectId": os.environ.get(
+            "GCLOUD_PROJECT", "spartacus-artes-marciais"
+        )},
+    )
+else:
+    firebase_admin.initialize_app()
 
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
@@ -56,23 +75,20 @@ def _send_to_expo(messages: list[dict]) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-@functions_framework.cloud_event
-def send_push(cloud_event: CloudEvent) -> None:
+@firestore_fn.on_document_created(document="push_queue/{docId}")
+def send_push(
+    event: firestore_fn.Event[firestore_fn.DocumentSnapshot],
+) -> None:
     """Process Firestore document creation in `push_queue` collection."""
     db = firestore.client()
 
-    subject = cloud_event.get("subject", "")
-    doc_path = subject.removeprefix("documents/")
-    if not doc_path or not doc_path.startswith("push_queue/"):
-        print(f"SKIP: unexpected subject={subject}")
-        return
-
-    doc_ref = db.document(doc_path)
-    snapshot = doc_ref.get()
+    snapshot = event.data
     if not snapshot.exists:
-        print(f"SKIP: document not found at {doc_path}")
+        print("SKIP: document does not exist")
         return
 
+    doc_path = f"push_queue/{event.params['docId']}"
+    doc_ref = db.document(doc_path)
     fields = snapshot.to_dict()
     to_uid = fields.get("to_uid", "")
     title = fields.get("title", "")

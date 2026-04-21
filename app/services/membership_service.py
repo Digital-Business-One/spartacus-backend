@@ -227,4 +227,7 @@ class MembershipService:
         projects = {
             d.to_dict()["projectId"]: d.to_dict()["roles"] for d in docs
         }
-        auth.set_custom_user_claims(user_id, {"projects": projects})
+        try:
+            auth.set_custom_user_claims(user_id, {"projects": projects})
+        except auth.UserNotFoundError:
+            pass  # Dependent without Firebase Auth account

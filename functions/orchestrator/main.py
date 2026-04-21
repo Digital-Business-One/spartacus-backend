@@ -7,14 +7,37 @@ channels: email, timeline, calendar, push.
 RFC-10 (base) + RFC-11 (timeline, calendar, push channels).
 """
 
+import os
 from datetime import datetime, timezone
 
-import functions_framework
-from cloudevents.http import CloudEvent
-from firebase_admin import firestore, initialize_app
-from google.cloud.firestore_v1.base_document import DocumentSnapshot
+import firebase_admin
+from firebase_admin import credentials as _creds
+from firebase_admin import firestore
+from firebase_functions import firestore_fn
 
-initialize_app()
+# When running inside Firebase Emulator, firebase-admin's initialize_app()
+# tries google.auth.default() which fails without ADC. Provide an anonymous
+# credential so the SDK initializes without real keys — all calls go to
+# localhost emulators anyway.
+if os.environ.get("FUNCTIONS_EMULATOR"):
+    os.environ.setdefault("FIRESTORE_EMULATOR_HOST", "localhost:8080")
+    os.environ.setdefault("FIREBASE_AUTH_EMULATOR_HOST", "localhost:9099")
+    os.environ.setdefault("FIREBASE_STORAGE_EMULATOR_HOST", "localhost:9199")
+
+    from google.auth.credentials import AnonymousCredentials
+
+    class _EmulatorCred(_creds.Base):
+        def get_credential(self):
+            return AnonymousCredentials()
+
+    firebase_admin.initialize_app(
+        credential=_EmulatorCred(),
+        options={"projectId": os.environ.get(
+            "GCLOUD_PROJECT", "spartacus-artes-marciais"
+        )},
+    )
+else:
+    firebase_admin.initialize_app()
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -149,7 +172,7 @@ EVENT_RULES: dict[str, dict] = {
             ],
         },
     },
-    "donation.confirmed": {
+    "donation.received": {
         "channels": ["timeline", "push"],
         "timeline": {
             "action": "update",
@@ -545,25 +568,20 @@ def _handle_push(rule, event_data, payload, doc_path, db):
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 
-@functions_framework.cloud_event
-def event_orchestrator(cloud_event: CloudEvent) -> None:
+@firestore_fn.on_document_created(document="events/{eventId}")
+def event_orchestrator(
+    event: firestore_fn.Event[firestore_fn.DocumentSnapshot],
+) -> None:
     """Process Firestore document creation in `events` collection."""
     db = firestore.client()
 
-    # Extract document path from CloudEvent subject
-    # Format: "documents/events/{docId}"
-    subject = cloud_event.get("subject", "")
-    doc_path = subject.removeprefix("documents/")
-    if not doc_path or not doc_path.startswith("events/"):
-        print(f"SKIP: unexpected subject={subject}")
-        return
-
-    doc_ref = db.document(doc_path)
-    snapshot = doc_ref.get()
+    snapshot = event.data
     if not snapshot.exists:
-        print(f"SKIP: document not found at {doc_path}")
+        print("SKIP: document does not exist")
         return
 
+    doc_path = f"events/{event.params['eventId']}"
+    doc_ref = db.document(doc_path)
     event_data = snapshot.to_dict()
     event_id = event_data.get("eventId", "")
     rule = EVENT_RULES.get(event_id)

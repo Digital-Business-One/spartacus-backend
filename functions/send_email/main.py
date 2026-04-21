@@ -3,44 +3,53 @@
 Triggered when a document is created in the Firestore `notifications`
 collection. Reads the document, sends the email via SendGrid, and
 updates the document status.
-
-Uses functions_framework.cloud_event (Gen2 standard) instead of the
-firebase_functions decorator, which the runtime no longer recognizes
-properly with the current version of functions-framework.
 """
 
 import os
 
-import functions_framework
-from cloudevents.http import CloudEvent
-from firebase_admin import firestore, initialize_app
+import firebase_admin
+from firebase_admin import credentials as _creds
+from firebase_admin import firestore
+from firebase_functions import firestore_fn
+
+if os.environ.get("FUNCTIONS_EMULATOR"):
+    os.environ.setdefault("FIRESTORE_EMULATOR_HOST", "localhost:8080")
+    os.environ.setdefault("FIREBASE_AUTH_EMULATOR_HOST", "localhost:9099")
+
+    from google.auth.credentials import AnonymousCredentials
+
+    class _EmulatorCred(_creds.Base):
+        def get_credential(self):
+            return AnonymousCredentials()
+
+    firebase_admin.initialize_app(
+        credential=_EmulatorCred(),
+        options={"projectId": os.environ.get(
+            "GCLOUD_PROJECT", "spartacus-artes-marciais"
+        )},
+    )
+else:
+    firebase_admin.initialize_app()
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import From, Mail, To
-
-initialize_app()
 
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 
 
-@functions_framework.cloud_event
-def send_email(cloud_event: CloudEvent) -> None:
+@firestore_fn.on_document_created(document="notifications/{docId}")
+def send_email(
+    event: firestore_fn.Event[firestore_fn.DocumentSnapshot],
+) -> None:
     """Process Firestore document creation in `notifications` collection."""
     db = firestore.client()
 
-    # Extract document path from CloudEvent subject
-    # Format: "documents/notifications/{docId}"
-    subject_attr = cloud_event.get("subject", "")
-    doc_path = subject_attr.removeprefix("documents/")
-    if not doc_path or not doc_path.startswith("notifications/"):
-        print(f"SKIP: unexpected subject={subject_attr}")
-        return
-
-    doc_ref = db.document(doc_path)
-    snapshot = doc_ref.get()
+    snapshot = event.data
     if not snapshot.exists:
-        print(f"SKIP: document not found at {doc_path}")
+        print("SKIP: document does not exist")
         return
 
+    doc_path = f"notifications/{event.params['docId']}"
+    doc_ref = db.document(doc_path)
     fields = snapshot.to_dict()
     template_id = fields.get("template_id", "")
     subject = fields.get("subject", "")

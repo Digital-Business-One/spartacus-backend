@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
 
+from app.events import publisher
 from app.logging.decorator import log
 from app.models.attendance import (
     AttendanceActionOut,
@@ -50,7 +51,7 @@ def confirm_attendance(data: AttendanceActionRequest) -> AttendanceActionOut:
         raise HTTPException(
             status_code=422, detail="class_id e user_id são obrigatórios",
         )
-    return AttendanceService().confirm_attendance(
+    result, event = AttendanceService().confirm_attendance(
         project_id=ctx.project_id,
         class_id=data.class_id,
         user_id=data.user_id,
@@ -58,6 +59,9 @@ def confirm_attendance(data: AttendanceActionRequest) -> AttendanceActionOut:
         source=data.source or "manual",
         aula_id=data.aula_id,
     )
+    if event:
+        publisher.publish(event, project_id=ctx.project_id, source="attendance_service")
+    return result
 
 
 @log
@@ -69,7 +73,7 @@ def reject_attendance(data: AttendanceActionRequest) -> AttendanceActionOut:
         raise HTTPException(
             status_code=422, detail="class_id e user_id são obrigatórios",
         )
-    return AttendanceService().reject_attendance(
+    result, event = AttendanceService().reject_attendance(
         project_id=ctx.project_id,
         class_id=data.class_id,
         user_id=data.user_id,
@@ -77,3 +81,6 @@ def reject_attendance(data: AttendanceActionRequest) -> AttendanceActionOut:
         reason=data.reason,
         aula_id=data.aula_id,
     )
+    if event:
+        publisher.publish(event, project_id=ctx.project_id, source="attendance_service")
+    return result

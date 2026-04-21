@@ -252,36 +252,6 @@ class CheckinService:
             ),
         )
 
-        # Resolve names for event payload
-        user_doc = db.collection(self._USERS).document(target_uid).get()
-        user_name = ""
-        if user_doc.exists:
-            user_name = user_doc.to_dict().get("name", "")
-
-        turma_doc = db.collection(self._CLASSES).document(turma_id).get()
-        turma_name = ""
-        modality_name = ""
-        if turma_doc.exists:
-            td = turma_doc.to_dict()
-            turma_name = td.get("name", "")
-            modality_name = self._resolve_modality(db, td)
-
-        event = DomainEvent(
-            id="checkin.registered",
-            payload=CheckinRegisteredPayload(
-                entity_id=ref.id,
-                source_entity_ref=f"presencas/{ref.id}",
-                source_entity_type="presencas",
-                target_uid=target_uid,
-                target_name=user_name,
-                author_uid=uid,
-                author_name=user_name,
-                turma_name=turma_name,
-                modalidade_name=modality_name,
-                class_date=now.strftime("%d/%m/%Y %H:%M"),
-            ),
-        )
-
         return CheckinResponse(
             attendance_id=ref.id,
             status="registered",

@@ -502,16 +502,6 @@ class AccountService:
         # _auto_approve_dependents above which moves them to
         # waiting_medical_history.
 
-        # If guardian goes to waiting_medical_history: send dependents along.
-        # This lets the guardian fill all anamneses (own + dependents) in
-        # the same session, instead of waiting for guardian's own anamnese
-        # to be approved by the team first.
-        if (
-            new_status == AccountStatus.WAITING_MEDICAL_HISTORY
-            and "guardian" in roles
-        ):
-            self._send_student_dependents_to_anamnese(db, uid)
-
         # If guardian is approved without anamnese (action="approve"),
         # students dependents still need anamnese — handled by
         # _auto_approve_dependents above which moves them to
@@ -724,18 +714,21 @@ class AccountService:
             return
         mem_ref.update({"status": "active"})
 
-        # Sync Firebase Custom Claims
-        all_memberships = (
-            db.collection(self._MEMBERSHIPS)
-            .where("userId", "==", uid)
-            .where("status", "==", "active")
-            .stream()
-        )
-        projects_claims: dict[str, list[str]] = {}
-        for m in all_memberships:
-            d = m.to_dict()
-            projects_claims[d["projectId"]] = d.get("roles", [])
-        auth.set_custom_user_claims(uid, {"projects": projects_claims})
+        # Sync Firebase Custom Claims (skip dependents — they have no Auth account)
+        try:
+            all_memberships = (
+                db.collection(self._MEMBERSHIPS)
+                .where("userId", "==", uid)
+                .where("status", "==", "active")
+                .stream()
+            )
+            projects_claims: dict[str, list[str]] = {}
+            for m in all_memberships:
+                d = m.to_dict()
+                projects_claims[d["projectId"]] = d.get("roles", [])
+            auth.set_custom_user_claims(uid, {"projects": projects_claims})
+        except auth.UserNotFoundError:
+            pass  # Dependent without Firebase Auth account — claims not needed
 
     def _send_student_dependents_to_anamnese(
         self,

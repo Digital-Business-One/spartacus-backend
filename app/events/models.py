@@ -180,8 +180,9 @@ class ValidationPayload:
             "entity_id": self.entity_id,
             "target_uid": self.target_uid,
             "target_name": self.target_name,
-            "validated_by": self.validated_by,
-            "validated_at": self.validated_at,
+            # camelCase — orchestrator reads validatedBy/validatedAt
+            "validatedBy": self.validated_by,
+            "validatedAt": self.validated_at,
         }
         if self.turma_name:
             d["turma_name"] = self.turma_name
