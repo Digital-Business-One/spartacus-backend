@@ -2,7 +2,7 @@
 
 Triggered daily at 23:59 by Cloud Scheduler.
 For each class that ended today without a check-in record,
-creates a presenca document with status "absent" and emits checkin.absent event.
+creates an attendance document with status "absent" and emits checkin.absent event.
 """
 
 from datetime import datetime, timezone
@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from firebase_admin import firestore
 
 from app.domain.enums import ValidationStatus
-from app.events.models import CheckinRegisteredPayload, DomainEvent
+from app.events.models import DomainEvent, ValidationPayload
 from app.logging.decorator import log
 
 
@@ -30,8 +30,8 @@ class AbsenceJobService:
         aulas = (
             db.collection("aulas")
             .where("projectId", "==", project_id)
-            .where("endDate", ">=", today_start.isoformat())
-            .where("endDate", "<=", now.isoformat())
+            .where("endTime", ">=", today_start.isoformat())
+            .where("endTime", "<=", now.isoformat())
             .stream()
         )
 
@@ -41,29 +41,19 @@ class AbsenceJobService:
             aula_id = aula_doc.id
             turma_id = aula.get("turmaId", "")
 
-            # Get turma info
-            turma_doc = db.collection("turmas").document(turma_id).get()
-            if not turma_doc.exists:
+            # Get class info (collection is "classes", not "turmas")
+            class_doc = db.collection("classes").document(turma_id).get()
+            if not class_doc.exists:
                 continue
-            turma = turma_doc.to_dict()
-            turma_name = turma.get("nome", "")
-            modalidade_name = turma.get("modalidadeNome", "")
+            class_data = class_doc.to_dict()
+            class_name = class_data.get("name", "")
 
-            # Get enrolled students
-            memberships = (
-                db.collection("memberships")
-                .where("projectId", "==", project_id)
-                .where("status", "==", "active")
+            # Get enrolled students via classIds on user docs
+            enrolled_users = list(
+                db.collection("users")
+                .where("classIds", "array_contains", turma_id)
                 .stream()
             )
-            student_uids = []
-            for m in memberships:
-                m_data = m.to_dict()
-                if "student" in m_data.get("roles", []):
-                    # Check if student is enrolled in this turma
-                    user_classes = m_data.get("classIds", [])
-                    if turma_id in user_classes or not user_classes:
-                        student_uids.append(m_data["userId"])
 
             # Find students who already have an attendance record for this aula
             existing = (
@@ -75,13 +65,12 @@ class AbsenceJobService:
             checked_in = {p.to_dict().get("userId") for p in existing}
 
             # Create absences for students without check-in
-            for uid in student_uids:
+            for user_doc in enrolled_users:
+                uid = user_doc.id
                 if uid in checked_in:
                     continue
 
-                # Get student name
-                user_doc = db.collection("users").document(uid).get()
-                user_data = user_doc.to_dict() if user_doc.exists else {}
+                user_data = user_doc.to_dict()
                 user_name = user_data.get("name", "")
 
                 absence_now = datetime.now(timezone.utc).isoformat()
@@ -91,7 +80,8 @@ class AbsenceJobService:
                     "userName": user_name,
                     "aulaId": aula_id,
                     "turmaId": turma_id,
-                    "turmaName": turma_name,
+                    "turmaName": class_name,
+                    "timestamp": absence_now,
                     "status": ValidationStatus.ABSENT,
                     "validatedBy": "system",
                     "validatedAt": absence_now,
@@ -105,17 +95,13 @@ class AbsenceJobService:
                 events.append(
                     DomainEvent(
                         id="checkin.absent",
-                        payload=CheckinRegisteredPayload(
+                        payload=ValidationPayload(
                             entity_id=attendance_ref.id,
-                            source_entity_ref=f"attendance/{attendance_ref.id}",
-                            source_entity_type="attendance",
                             target_uid=uid,
                             target_name=user_name,
-                            author_uid="system",
-                            author_name="Sistema",
-                            turma_name=turma_name,
-                            modalidade_name=modalidade_name,
-                            class_date=aula.get("dateTime", ""),
+                            validated_by="system",
+                            validated_at=absence_now,
+                            turma_name=class_name,
                         ),
                     )
                 )

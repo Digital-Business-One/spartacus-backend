@@ -40,23 +40,8 @@ _ROOT_DATA = {
     "is_root": True,
 }
 
-_OWNER = {
-    "name": "Istanrley Aparecido Araujo Amaral",
-    "email": "praquemdecide@gmail.com",
-    "birthDate": "01/01/1990",
-    "gender": "male",
-    "phone": "65999999999",
-    "whatsapp": "65999999999",
-    "address": {
-        "postalCode": "78350-000",
-        "street": "Rua Rotary Internacional",
-        "number": "270",
-        "complement": "",
-        "neighborhood": "Centro",
-        "city": "Brasnorte",
-        "state": "MT",
-    },
-}
+_OWNER_EMAIL = "admin@spartacus.app.br"
+_OWNER_NAME = "Admin Spartacus"
 
 
 def run() -> None:
@@ -108,51 +93,37 @@ def run() -> None:
     print(f"ROOT project '{project_id}' seeded.")
     print(f"  logo_url: {logo_url}")
 
-    # ── Create owner Firebase Auth user (idempotent) ─────────────────────────
-    owner_email = _OWNER["email"]
+    # ── Locate admin account (created by seed_admin_account.py) ────────────────
+    # If admin user exists, ensure owner membership for the ROOT project.
+    # Does NOT create the user — that's seed_admin_account.py's responsibility.
     try:
-        user_record = auth.get_user_by_email(owner_email)
+        user_record = auth.get_user_by_email(_OWNER_EMAIL)
         uid = user_record.uid
-        print(f"Owner user already exists: {uid}")
-    except auth.UserNotFoundError:
-        user_record = auth.create_user(
-            email=owner_email,
-            email_verified=True,
-            display_name=_OWNER["name"],
-            password="Spartacus2025!",
+        print(f"Admin user found: {uid} ({_OWNER_EMAIL})")
+
+        # Ensure owner role in custom claims
+        existing_claims = user_record.custom_claims or {}
+        projects_claims = existing_claims.get("projects", {})
+        current_roles = set(projects_claims.get(project_id, []))
+        if "owner" not in current_roles:
+            current_roles.add("owner")
+            projects_claims[project_id] = list(current_roles)
+            auth.set_custom_user_claims(uid, {"projects": projects_claims})
+
+        # Upsert owner membership
+        db.collection("memberships").document(f"{project_id}_{uid}").set(
+            {
+                "projectId": project_id,
+                "userId": uid,
+                "roles": list(current_roles),
+                "status": "active",
+                "joined_at": now,
+            },
+            merge=True,
         )
-        uid = user_record.uid
-        print(f"Owner user created: {uid}")
-
-    # Set custom claims for owner
-    auth.set_custom_user_claims(uid, {
-        "projects": {project_id: ["owner"]},
-    })
-
-    # ── Upsert owner user document ───────────────────────────────────────────
-    db.collection("users").document(uid).set(
-        {
-            **_OWNER,
-            "approvalStatus": "approved",
-            "isDependent": False,
-            "classIds": [],
-            "createdAt": now,
-        },
-        merge=True,
-    )
-
-    # ── Upsert owner membership ──────────────────────────────────────────────
-    db.collection("memberships").document(f"{project_id}_{uid}").set(
-        {
-            "projectId": project_id,
-            "userId": uid,
-            "roles": ["owner"],
-            "status": "active",
-            "joined_at": now,
-        },
-        merge=True,
-    )
-    print(f"Owner membership created: {owner_email} → {project_id}")
+        print(f"Owner membership ensured: {_OWNER_EMAIL} → {project_id}")
+    except auth.UserNotFoundError:
+        print(f"Admin user ({_OWNER_EMAIL}) not found — run seed_admin_account first.")
 
     print("\nSeed complete.")
 

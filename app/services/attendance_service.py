@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from firebase_admin import firestore
 
+from app.events.models import DomainEvent, ValidationPayload
 from app.logging.decorator import log
 from app.models.attendance import (
     AttendanceActionOut,
@@ -553,10 +554,11 @@ class AttendanceService:
             enrolled_count=0,  # filled below
         )
 
-        # Enrolled users: query users where classIds contains class_id
+        # Enrolled users: query users where classIds contains class_id.
+        # users collection is GLOBAL (no projectId field) — scoping is
+        # implicit via class_id which already contains the project prefix.
         user_docs = list(
             db.collection(self._USERS)
-            .where("projectId", "==", project_id)
             .where("classIds", "array_contains", class_id)
             .stream()
         )
@@ -640,7 +642,7 @@ class AttendanceService:
         actor_uid: str,
         source: str = "manual",
         aula_id: str | None = None,
-    ) -> AttendanceActionOut:
+    ) -> tuple[AttendanceActionOut, DomainEvent | None]:
         """Mark attendance as confirmed for today. Creates doc if missing."""
         db = firestore.client()
         now = datetime.now(_TZ_OFFSET)
@@ -659,6 +661,16 @@ class AttendanceService:
             db, project_id, class_id, resolved_aula_id, now,
         )
 
+        # Resolve names for event payload
+        user_doc = db.collection(self._USERS).document(user_id).get()
+        user_name = (
+            user_doc.to_dict().get("name", "") if user_doc.exists else ""
+        )
+        class_doc = db.collection(self._CLASSES).document(class_id).get()
+        class_name = (
+            class_doc.to_dict().get("name", "") if class_doc.exists else ""
+        )
+
         # Find existing attendance doc for this user/aula
         existing = list(
             db.collection(self._ATTENDANCE)
@@ -669,6 +681,7 @@ class AttendanceService:
             .stream()
         )
 
+        att_id: str
         if existing:
             ref = existing[0].reference
             ref.update({
@@ -677,35 +690,38 @@ class AttendanceService:
                 "validatedAt": now_iso,
                 "source": source,
             })
-            return AttendanceActionOut(
-                status="confirmed", attendance_id=ref.id,
-            )
+            att_id = ref.id
+        else:
+            _, ref = db.collection(self._ATTENDANCE).add({
+                "projectId": project_id,
+                "userId": user_id,
+                "userName": user_name,
+                "aulaId": resolved_aula_id,
+                "turmaId": class_id,
+                "turmaName": class_name,
+                "timestamp": now_iso,
+                "status": "confirmed",
+                "validatedBy": actor_uid,
+                "validatedAt": now_iso,
+                "source": source,
+            })
+            att_id = ref.id
 
-        user_doc = db.collection(self._USERS).document(user_id).get()
-        user_name = (
-            user_doc.to_dict().get("name", "") if user_doc.exists else ""
+        event = DomainEvent(
+            id="checkin.confirmed",
+            payload=ValidationPayload(
+                entity_id=att_id,
+                target_uid=user_id,
+                target_name=user_name,
+                validated_by=actor_uid,
+                validated_at=now_iso,
+                turma_name=class_name,
+            ),
         )
-        class_doc = db.collection(self._CLASSES).document(class_id).get()
-        class_name = (
-            class_doc.to_dict().get("name", "") if class_doc.exists else ""
-        )
 
-        _, ref = db.collection(self._ATTENDANCE).add({
-            "projectId": project_id,
-            "userId": user_id,
-            "userName": user_name,
-            "aulaId": resolved_aula_id,
-            "turmaId": class_id,
-            "turmaName": class_name,
-            "timestamp": now_iso,
-            "status": "confirmed",
-            "validatedBy": actor_uid,
-            "validatedAt": now_iso,
-            "source": source,
-        })
-
-        return AttendanceActionOut(
-            status="confirmed", attendance_id=ref.id,
+        return (
+            AttendanceActionOut(status="confirmed", attendance_id=att_id),
+            event,
         )
 
     @log
@@ -717,7 +733,7 @@ class AttendanceService:
         actor_uid: str,
         reason: str | None = None,
         aula_id: str | None = None,
-    ) -> AttendanceActionOut:
+    ) -> tuple[AttendanceActionOut, DomainEvent | None]:
         """Reject a registered check-in. Card returns to 'Ausente' column."""
         db = firestore.client()
         now = datetime.now(_TZ_OFFSET)
@@ -748,14 +764,32 @@ class AttendanceService:
             )
 
         ref = existing[0].reference
+        att_data = existing[0].to_dict()
         ref.update({
-            "status": "rejected",
+            "status": "absent",
             "validatedBy": actor_uid,
             "validatedAt": now_iso,
             "rejectionReason": reason or "",
         })
-        return AttendanceActionOut(
-            status="rejected", attendance_id=ref.id,
+
+        user_name = att_data.get("userName", "")
+        class_name = att_data.get("turmaName", "")
+
+        event = DomainEvent(
+            id="checkin.absent",
+            payload=ValidationPayload(
+                entity_id=ref.id,
+                target_uid=user_id,
+                target_name=user_name,
+                validated_by=actor_uid,
+                validated_at=now_iso,
+                turma_name=class_name,
+            ),
+        )
+
+        return (
+            AttendanceActionOut(status="rejected", attendance_id=ref.id),
+            event,
         )
 
     def _resolve_today_aula_id(
