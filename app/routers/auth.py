@@ -8,6 +8,7 @@ from app.models.auth import (
     CheckEmailResponse,
     EmailVerifiedResponse,
     MeResponse,
+    PasswordResetRequest,
     ResendVerificationRequest,
     SignupRequest,
     SignupResponse,
@@ -96,4 +97,20 @@ def resend_verification(
         publisher.publish(
             event, project_id=x_project_id, source="auth_service"
         )
+    return EmailVerifiedResponse(status="ok")
+
+
+@log
+@router.post("/password-reset")
+@public
+def password_reset(
+    data: PasswordResetRequest,
+    x_project_id: str = Header(...),
+) -> EmailVerifiedResponse:
+    event = AuthService().request_password_reset(data.email)
+    if event:
+        publisher.publish(
+            event, project_id=x_project_id, source="auth_service"
+        )
+    # Always 200 — do not reveal whether the email is registered.
     return EmailVerifiedResponse(status="ok")

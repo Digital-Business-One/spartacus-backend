@@ -166,6 +166,17 @@ class ResendVerificationRequest(BaseModel):
     email: str
 
 
+class PasswordResetRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def email_format(cls, v: str) -> str:
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Email inválido")
+        return v.lower()
+
+
 class EmailVerifiedResponse(BaseModel):
     status: str
 

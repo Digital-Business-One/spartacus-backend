@@ -70,7 +70,7 @@ class ResendVerificationPayload:
 class AccountNotificationPayload:
     """Generic notification payload: title + message + optional CTA.
 
-    Used for: approval, rejection, anamnese, revision.
+    Used for: approval, rejection, anamnese, revision, password reset.
     """
 
     to: str
@@ -82,6 +82,8 @@ class AccountNotificationPayload:
 
     def personalization(self) -> dict:
         return {
+            "to": self.to,
+            "email": self.to,
             "name": self.name,
             "title": self.title,
             "message": self.message,

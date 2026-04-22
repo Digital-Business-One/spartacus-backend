@@ -33,6 +33,16 @@ from app.security.middleware import AuthMiddleware
 from app.services.project_service import ProjectService
 
 load_dotenv()
+
+# google-cloud-storage (used by firebase_admin.storage under the hood) reads
+# STORAGE_EMULATOR_HOST; the Firebase CLI / docker-compose expose the emulator
+# via FIREBASE_STORAGE_EMULATOR_HOST. Bridge the two so local uploads route to
+# the Storage emulator instead of hitting real GCS.
+_fb_storage_host = os.getenv("FIREBASE_STORAGE_EMULATOR_HOST")
+if _fb_storage_host and not os.getenv("STORAGE_EMULATOR_HOST"):
+    _url = _fb_storage_host if "://" in _fb_storage_host else f"http://{_fb_storage_host}"
+    os.environ["STORAGE_EMULATOR_HOST"] = _url
+
 configure_logging()
 
 app = FastAPI(title="Spartacus API", version="0.1.0")

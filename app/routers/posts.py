@@ -13,6 +13,7 @@ from app.models.post import PostCreate, PostOut, PostUpdate
 from app.security.context import auth_ctx
 from app.security.decorator import require_roles
 from app.services.post_service import PostService
+from app.services.storage_service import build_blob_public_url
 
 _UPLOAD_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
 _ALLOWED_MEDIA = {
@@ -106,7 +107,8 @@ async def upload_attachment(file: UploadFile) -> dict:
     bucket = storage.bucket(bucket_name)
     blob = bucket.blob(blob_name)
     blob.upload_from_string(contents, content_type=content_type)
-    blob.make_public()
+    # Bucket has allUsers objectViewer at the IAM level (UBLA enabled),
+    # so per-object make_public() is redundant and would fail.
 
     # Classify for the AttachmentIn.type field
     if content_type.startswith("image"):
@@ -118,7 +120,7 @@ async def upload_attachment(file: UploadFile) -> dict:
 
     return {
         "type": att_type,
-        "url": blob.public_url,
+        "url": build_blob_public_url(bucket_name, blob_name),
         "name": file.filename or f"attachment.{ext}",
         "size": len(contents),
     }

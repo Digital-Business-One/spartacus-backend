@@ -1,5 +1,6 @@
 import io
 import os
+from urllib.parse import quote
 
 from fastapi import HTTPException, UploadFile
 from firebase_admin import storage
@@ -20,6 +21,29 @@ def _get_bucket():
         "spartacus-artes-marciais.firebasestorage.app",
     )
     return storage.bucket(bucket_name)
+
+
+def build_blob_public_url(bucket_name: str, blob_name: str) -> str:
+    """Return a public URL for ``blob_name`` that works in both prod and local.
+
+    - Prod: canonical ``https://storage.googleapis.com/{bucket}/{path}``.
+      Requires the bucket to have ``allUsers`` objectViewer at IAM level
+      (our setup does).
+    - Local (Storage emulator): the public URL from prod does not resolve,
+      so return the emulator's Firebase Storage REST URL. The host is
+      rewritten so it works when served to the browser (internal compose
+      hostnames like ``emulators:9199`` are replaced with ``localhost``).
+    """
+    emulator_host = os.getenv("FIREBASE_STORAGE_EMULATOR_HOST")
+    if emulator_host:
+        # Docker-compose internal hostname → browser-reachable host
+        public_host = emulator_host.replace("emulators:", "localhost:")
+        encoded = quote(blob_name, safe="")
+        return (
+            f"http://{public_host}/v0/b/{bucket_name}"
+            f"/o/{encoded}?alt=media"
+        )
+    return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
 
 
 class StorageService:
@@ -77,11 +101,7 @@ class StorageService:
         blob = bucket.blob(path)
         blob.upload_from_file(buf, content_type="image/jpeg")
 
-        # Public URL (bucket has allUsers objectViewer)
-        return (
-            f"https://storage.googleapis.com/"
-            f"{bucket.name}/{path}"
-        )
+        return build_blob_public_url(bucket.name, path)
 
     @log
     def delete_avatar(self, uid: str) -> None:

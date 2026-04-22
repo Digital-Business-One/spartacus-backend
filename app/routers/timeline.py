@@ -5,7 +5,12 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.logging.decorator import log
-from app.models.timeline import LinkPreviewResponse, TimelineFeedResponse
+from app.models.timeline import (
+    LikesResponse,
+    LikeUser,
+    LinkPreviewResponse,
+    TimelineFeedResponse,
+)
 from app.security.context import auth_ctx
 from app.security.decorator import require_roles
 from app.services.link_preview_service import LinkPreviewService
@@ -49,6 +54,17 @@ def like_entry(entry_id: str):
 def unlike_entry(entry_id: str):
     ctx = auth_ctx.get()
     TimelineService().unlike(entry_id, ctx.user_id)
+
+
+@log
+@router.get("/{entry_id}/reactions")
+def list_reactions(entry_id: str) -> LikesResponse:
+    ctx = auth_ctx.get()
+    try:
+        users = TimelineService().list_reactions(entry_id, ctx.project_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return LikesResponse(users=[LikeUser(**u) for u in users])
 
 
 @log

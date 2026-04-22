@@ -43,8 +43,8 @@ class TimelineService:
 
         # When acting as a dependent, only show that dependent's entries
 
-        visible = []
-        last_created_at = None
+        collected: list[dict] = []
+        last_created_at: str | None = None
 
         for doc in query.stream():
             entry = doc.to_dict()
@@ -68,14 +68,43 @@ class TimelineService:
             )
             entry["userLiked"] = reaction_ref.get().exists
 
-            visible.append(self._to_out(entry))
+            collected.append(entry)
             last_created_at = entry.get("createdAt")
 
-            if len(visible) >= limit:
+            if len(collected) >= limit:
                 break
 
+        # Batch-fetch photos for all authors + targets in a single request.
+        # Timeline entries only denormalize name/roles, not photo — resolving
+        # live keeps the feed fresh when a user updates their avatar.
+        photo_uids: set[str] = set()
+        for e in collected:
+            if e.get("authorUid"):
+                photo_uids.add(e["authorUid"])
+            if e.get("targetUid"):
+                photo_uids.add(e["targetUid"])
+        photos = self._fetch_user_photos(db, photo_uids)
+
+        visible = [self._to_out(e, photos) for e in collected]
         next_cursor = last_created_at if len(visible) >= limit else None
         return visible, next_cursor
+
+    def _fetch_user_photos(
+        self, db, uids: set[str]
+    ) -> dict[str, str]:
+        """Return ``{uid: photoUrl}`` for the given uids (skipping empty)."""
+        if not uids:
+            return {}
+        refs = [db.collection("users").document(uid) for uid in uids]
+        docs = db.get_all(refs)
+        out: dict[str, str] = {}
+        for doc in docs:
+            if not doc.exists:
+                continue
+            url = doc.to_dict().get("photoUrl")
+            if url:
+                out[doc.id] = url
+        return out
 
     @log
     def like(self, entry_id: str, user_id: str) -> None:
@@ -108,6 +137,61 @@ class TimelineService:
 
         reaction_ref.delete()
         entry_ref.update({"likesCount": firestore.Increment(-1)})
+
+    @log
+    def list_reactions(
+        self, entry_id: str, project_id: str
+    ) -> list[dict]:
+        """Return users who liked the entry, with their name + primary role.
+
+        Role is resolved from the user's membership in the current project.
+        If no membership is found, role is left empty.
+        """
+        db = firestore.client()
+        entry_ref = db.collection(self._COLLECTION).document(entry_id)
+        if not entry_ref.get().exists:
+            raise LookupError("Timeline entry não encontrada")
+
+        reaction_docs = list(entry_ref.collection("reactions").stream())
+        if not reaction_docs:
+            return []
+
+        uids = [doc.id for doc in reaction_docs]
+        # Batch fetch users
+        user_refs = [db.collection("users").document(uid) for uid in uids]
+        user_docs = db.get_all(user_refs)
+        users_by_uid: dict[str, dict] = {
+            doc.id: doc.to_dict()
+            for doc in user_docs
+            if doc.exists
+        }
+        # Batch fetch memberships for role resolution
+        membership_refs = [
+            db.collection("memberships").document(f"{project_id}_{uid}")
+            for uid in uids
+        ]
+        membership_docs = db.get_all(membership_refs)
+        roles_by_uid: dict[str, str] = {}
+        for doc in membership_docs:
+            if not doc.exists:
+                continue
+            # Membership doc id is "{projectId}_{userId}" — recover uid
+            uid = doc.id.removeprefix(f"{project_id}_")
+            roles = doc.to_dict().get("roles", []) or []
+            roles_by_uid[uid] = roles[0] if roles else ""
+
+        result: list[dict] = []
+        for uid in uids:
+            udata = users_by_uid.get(uid, {})
+            result.append({
+                "uid": uid,
+                "name": udata.get("name", "Usuário"),
+                "role": roles_by_uid.get(uid, ""),
+                "photo_url": udata.get("photoUrl"),
+            })
+        # Sort by name for a stable UI
+        result.sort(key=lambda u: u["name"].lower())
+        return result
 
     def _get_dependents(
         self, db, user_id: str, project_id: str
@@ -143,18 +227,27 @@ class TimelineService:
             return target == user_id or target in dependents
         return False
 
-    def _to_out(self, entry: dict) -> TimelineEntryOut:
+    def _to_out(
+        self,
+        entry: dict,
+        photos: dict[str, str] | None = None,
+    ) -> TimelineEntryOut:
+        photos = photos or {}
+        author_uid = entry.get("authorUid", "")
+        target_uid = entry.get("targetUid")
         return TimelineEntryOut(
             id=entry.get("id", ""),
             project_id=entry.get("projectId", ""),
             type=entry.get("type", ""),
             origin=entry.get("origin", ""),
             visibility=entry.get("visibility", ""),
-            author_uid=entry.get("authorUid", ""),
+            author_uid=author_uid,
             author_name=entry.get("authorName", ""),
             author_roles=entry.get("authorRoles", []),
-            target_uid=entry.get("targetUid"),
+            author_photo_url=photos.get(author_uid),
+            target_uid=target_uid,
             target_name=entry.get("targetName"),
+            target_photo_url=photos.get(target_uid) if target_uid else None,
             title=entry.get("title"),
             description=entry.get("description"),
             attachments=entry.get("attachments"),
@@ -172,6 +265,9 @@ class TimelineService:
             modalidade_name=entry.get("modalidadeName"),
             class_date=entry.get("classDate"),
             donation_amount=entry.get("donationAmount"),
+            roles_label=entry.get("rolesLabel"),
+            classes=entry.get("classes"),
+            guardian_name=entry.get("guardianName"),
             created_at=entry.get("createdAt", ""),
             updated_at=entry.get("updatedAt"),
         )
