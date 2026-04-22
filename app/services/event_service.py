@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 from firebase_admin import firestore
@@ -5,9 +6,30 @@ from firebase_admin import firestore
 from app.logging.decorator import log
 from app.models.event import EventOut
 
+# Legacy rows written before the frontend switched to ISO-8601 have dates
+# as "DD/MM/YYYY[ HH:mm]". Detect and convert them so the filter and the
+# frontend (which parses with `new Date(...)`) both work transparently.
+_BR_DATE = re.compile(
+    r"^(\d{2})/(\d{2})/(\d{4})(?:\s+(\d{2}):(\d{2}))?$",
+)
+
+
+def _to_iso(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    m = _BR_DATE.match(value)
+    if not m:
+        return value  # already ISO or unknown format
+    d, mo, y, hh, mm = m.groups()
+    time = f"T{hh}:{mm}:00" if hh and mm else "T00:00:00"
+    return f"{y}-{mo}-{d}{time}"
+
 
 class EventService:
-    _COLLECTION = "events"
+    # Written by the orchestrator Cloud Function when a post of type
+    # event/championship is created. NOT the "events" collection (that one
+    # is the domain-event pubsub stream for the backend itself).
+    _COLLECTION = "eventos_calendario"
 
     @log
     def list_by_project(
@@ -25,12 +47,11 @@ class EventService:
         results: list[EventOut] = []
         for doc in docs:
             data = doc.to_dict()
-            start = data.get("startDate", "")
+            start_iso = _to_iso(data.get("startDate", ""))
 
             # Filter by month if provided (YYYY-MM)
-            if month and start:
-                event_month = start[:7]  # "2026-04-15..." → "2026-04"
-                if event_month != month:
+            if month and start_iso:
+                if start_iso[:7] != month:
                     continue
 
             results.append(
@@ -38,8 +59,8 @@ class EventService:
                     id=doc.id,
                     title=data.get("title", ""),
                     type=data.get("type", "event"),
-                    start_date=start,
-                    end_date=data.get("endDate"),
+                    start_date=start_iso or "",
+                    end_date=_to_iso(data.get("endDate")),
                     location=data.get("location"),
                     description=data.get("description"),
                 )

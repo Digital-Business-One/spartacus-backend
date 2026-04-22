@@ -300,6 +300,10 @@ EVENT_RULES: dict[str, dict] = {
         "channels": ["email"],
         "email": {"template_id": _TPL_NOTIFICATION, "subject": "Anamnese enviada — Spartacus"},
     },
+    "account.password_reset": {
+        "channels": ["email"],
+        "email": {"template_id": _TPL_NOTIFICATION, "subject": "Redefinir senha — Spartacus"},
+    },
 }
 
 
@@ -386,6 +390,12 @@ def _handle_timeline(rule, event_data, payload, doc_path, db):
     doc_ref = db.collection("timeline_entries").document(timeline_doc_id)
 
     if action == "create":
+        # Main account (or generic) entry.
+        class_names = [
+            c.get("name", "")
+            for c in (payload.get("classes") or [])
+            if isinstance(c, dict)
+        ]
         doc_ref.set({
             "projectId": event_data.get("projectId"),
             "type": tl.get("type") or payload.get("type"),
@@ -414,11 +424,58 @@ def _handle_timeline(rule, event_data, payload, doc_path, db):
             "modalidadeName": payload.get("modalidade_name"),
             "classDate": payload.get("class_date"),
             "donationAmount": payload.get("donation_amount"),
+            "rolesLabel": payload.get("roles_label"),
+            "classes": class_names,
+            "guardianName": None,
             "likesCount": 0,
             "createdAt": event_data.get("occurredAt"),
             "updatedAt": None,
         })
         print(f"OK: event={event_data.get('eventId')} channel=timeline action=create id={timeline_doc_id}")
+
+        # Fan-out: one timeline entry per dependent created in this signup.
+        if tl.get("type") == "account_created":
+            for dep in payload.get("dependents", []) or []:
+                dep_id = dep.get("id") or ""
+                if not dep_id:
+                    continue
+                dep_doc_id = f"{prefix}_{entity_id}_dep_{dep_id}"
+                db.collection("timeline_entries").document(dep_doc_id).set({
+                    "projectId": event_data.get("projectId"),
+                    "type": "account_created",
+                    "origin": "system",
+                    "visibility": tl.get("visibility", "staff_only"),
+                    "authorUid": payload.get("uid", ""),
+                    "authorName": payload.get("name", ""),
+                    "authorRoles": [],
+                    "targetUid": f"{entity_id}_dep_{dep_id}",
+                    "targetName": dep.get("name"),
+                    "title": "Nova conta criada",
+                    "description": dep.get("name"),
+                    "attachments": None,
+                    "linkPreview": None,
+                    "eventDate": None,
+                    "eventLocation": None,
+                    "sourceEventRef": doc_path,
+                    "sourceEntityRef": f"users/{entity_id}_dep_{dep_id}",
+                    "sourceEntityType": "users",
+                    "validationStatus": None,
+                    "reviewRequested": False,
+                    "reviewRequestedAt": None,
+                    "reviewResolved": False,
+                    "reviewResolvedAt": None,
+                    "turmaName": None,
+                    "modalidadeName": None,
+                    "classDate": None,
+                    "donationAmount": None,
+                    "rolesLabel": "Aluno",
+                    "classes": dep.get("class_names", []) or [],
+                    "guardianName": payload.get("name"),
+                    "likesCount": 0,
+                    "createdAt": event_data.get("occurredAt"),
+                    "updatedAt": None,
+                })
+                print(f"OK: event={event_data.get('eventId')} channel=timeline action=create id={dep_doc_id} (dependent)")
 
     elif action in ("update", "update_or_create"):
         update_data = {"updatedAt": _now()}

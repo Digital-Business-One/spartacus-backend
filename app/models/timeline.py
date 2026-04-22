@@ -18,9 +18,11 @@ class TimelineEntryOut(BaseModel):
     author_uid: str
     author_name: str
     author_roles: list[str] = []
+    author_photo_url: Optional[str] = None
 
     target_uid: Optional[str] = None
     target_name: Optional[str] = None
+    target_photo_url: Optional[str] = None
 
     title: Optional[str] = None
     description: Optional[str] = None
@@ -45,6 +47,10 @@ class TimelineEntryOut(BaseModel):
     class_date: Optional[str] = None
     donation_amount: Optional[str] = None
 
+    roles_label: Optional[str] = None
+    classes: Optional[list[str]] = None
+    guardian_name: Optional[str] = None
+
     created_at: str
     updated_at: Optional[str] = None
 
@@ -67,3 +73,18 @@ class LinkPreviewResponse(BaseModel):
     title: str = ""
     image: str = ""
     description: str = ""
+
+
+class LikeUser(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    uid: str
+    name: str
+    role: str = ""
+    photo_url: Optional[str] = None
+
+
+class LikesResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    users: list[LikeUser]

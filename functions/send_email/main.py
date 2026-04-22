@@ -68,6 +68,22 @@ def send_email(
     if isinstance(data, dict):
         data["subject"] = subject
 
+    # Dev fallback: no SendGrid key → log the email (including any CTA link)
+    # instead of actually sending. When a real key is present, always send —
+    # this lets developers test the full pipeline end-to-end against SendGrid.
+    if not SENDGRID_API_KEY:
+        print("─" * 60)
+        print(f"[LOCAL EMAIL] event={event_id}")
+        print(f"  to:      {to_email}")
+        print(f"  subject: {subject}")
+        print(f"  template: {template_id}")
+        if isinstance(data, dict):
+            for k, v in data.items():
+                print(f"  {k}: {v}")
+        print("─" * 60)
+        doc_ref.update({"status": "sent_local"})
+        return
+
     message = Mail()
     message.from_email = From(from_email, from_name)
     message.to = To(to_email)

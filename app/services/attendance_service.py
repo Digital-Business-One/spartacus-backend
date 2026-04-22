@@ -614,7 +614,7 @@ class AttendanceService:
                     roles=ud.get("roles", []) or [],
                     is_dependent=bool(ud.get("guardianUid")),
                     guardian_uid=ud.get("guardianUid"),
-                    guardian_name=ud.get("guardianName"),
+                    guardian_name=None,
                     status=status,
                     attendance_id=attendance_id,
                     source=source,
@@ -622,6 +622,23 @@ class AttendanceService:
                     confirmed_at=confirmed_at,
                 )
             )
+
+        # Resolve guardian names for dependents (batch fetch)
+        guardian_uids = {s.guardian_uid for s in students if s.guardian_uid}
+        if guardian_uids:
+            guardian_refs = [
+                db.collection(self._USERS).document(gid)
+                for gid in guardian_uids
+            ]
+            guardian_docs = db.get_all(guardian_refs)
+            guardian_names = {
+                doc.id: doc.to_dict().get("name")
+                for doc in guardian_docs
+                if doc.exists
+            }
+            for s in students:
+                if s.guardian_uid and s.guardian_uid in guardian_names:
+                    s.guardian_name = guardian_names[s.guardian_uid]
 
         class_brief.enrolled_count = len(students)
         students.sort(key=lambda s: s.name.lower())

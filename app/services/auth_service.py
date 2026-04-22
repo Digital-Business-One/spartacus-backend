@@ -1,4 +1,6 @@
+import os
 from datetime import date, datetime, timezone
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 from firebase_admin import auth, firestore
@@ -262,6 +264,51 @@ class AuthService:
         )
 
     @log
+    def request_password_reset(self, email: str) -> DomainEvent | None:
+        """Generate a password reset link and emit an event.
+
+        Returns None if the email is not registered — we intentionally do
+        not reveal account existence, so the endpoint responds 200 either
+        way and no notification is sent.
+        """
+        try:
+            record = auth.get_user_by_email(email)
+        except auth.UserNotFoundError:
+            return None
+
+        firebase_link = auth.generate_password_reset_link(email)
+        # Firebase always generates a link pointing to its own action URL
+        # (emulator or prod). Rewrite it to point to our own branded page so
+        # the user lands on a Spartacus-styled reset screen. The oobCode is
+        # the only thing our page needs — it calls confirmPasswordReset on
+        # the Firebase SDK, which works against both emulator and prod.
+        oob_code = parse_qs(urlparse(firebase_link).query).get("oobCode", [""])[0]
+        web_base = os.getenv("APP_WEB_URL", "").rstrip("/")
+        link = (
+            f"{web_base}/reset-password?oobCode={oob_code}"
+            if web_base and oob_code
+            else firebase_link
+        )
+
+        name = record.display_name or email.split("@")[0]
+        return DomainEvent(
+            id="account.password_reset",
+            payload=AccountNotificationPayload(
+                to=email,
+                name=name,
+                title="Redefinir sua senha",
+                message=(
+                    "Recebemos uma solicitação para redefinir a senha da sua "
+                    "conta Spartacus. Clique no botão abaixo para criar uma "
+                    "nova senha. Se você não solicitou, pode ignorar este "
+                    "e-mail — sua senha atual continuará funcionando."
+                ),
+                cta_text="Redefinir senha",
+                cta_url=link,
+            ),
+        )
+
+    @log
     def get_user_status(self, uid: str) -> dict:
         db = firestore.client()
         doc = db.collection(self._USERS).document(uid).get()
@@ -293,14 +340,16 @@ class AuthService:
         dependents_data: list[dict] = []
         if show_dependents:
             for dep in data.dependents:
-                dep_classes = ", ".join(
+                dep_class_names = [
                     class_map.get(cid, cid) for cid in dep.class_ids
-                )
+                ]
                 dependents_data.append(
                     {
+                        "id": dep.id,
                         "name": dep.name,
                         "age": _calculate_age(dep.birth_date),
-                        "classes": dep_classes,
+                        "classes": ", ".join(dep_class_names),
+                        "class_names": dep_class_names,
                     }
                 )
         return {
