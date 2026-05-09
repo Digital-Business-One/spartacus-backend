@@ -112,7 +112,11 @@ EVENT_RULES: dict[str, dict] = {
     "checkin.confirmed": {
         "channels": ["timeline", "push"],
         "timeline": {
-            "action": "update",
+            # update_or_create: staff can confirm a student that never
+            # scanned the QR (no prior checkin.registered timeline entry).
+            "action": "update_or_create",
+            "type": "attendance",
+            "visibility": "personal_and_staff",
             "id_prefix": "presenca",
             "update_fields": {"validationStatus": "confirmed"},
         },
@@ -491,8 +495,11 @@ def _handle_timeline(rule, event_data, payload, doc_path, db):
         if action == "update_or_create":
             existing = doc_ref.get()
             if not existing.exists:
-                # Create instead (e.g., checkin.absent from job — no prior checkin.registered)
-                _handle_timeline_create_for_absent(
+                # Create instead. Examples:
+                #   - checkin.absent from job (no prior checkin.registered)
+                #   - checkin.confirmed when staff registers attendance for
+                #     a student that never scanned the QR
+                _handle_timeline_create_fallback(
                     tl, event_data, payload, doc_path, doc_ref
                 )
                 return
@@ -501,8 +508,14 @@ def _handle_timeline(rule, event_data, payload, doc_path, db):
         print(f"OK: event={event_data.get('eventId')} channel=timeline action=update id={timeline_doc_id}")
 
 
-def _handle_timeline_create_for_absent(tl, event_data, payload, doc_path, doc_ref):
-    """Create a timeline entry for absent when no prior registered entry exists."""
+def _handle_timeline_create_fallback(tl, event_data, payload, doc_path, doc_ref):
+    """Create a timeline entry when update_or_create finds no existing doc.
+
+    The validationStatus is taken from the rule's update_fields so the
+    fallback works for any update_or_create event (e.g., absent → "absent",
+    confirmed → "confirmed").
+    """
+    update_fields = tl.get("update_fields") or {}
     doc_ref.set({
         "projectId": event_data.get("projectId"),
         "type": tl.get("type", "attendance"),
@@ -522,7 +535,7 @@ def _handle_timeline_create_for_absent(tl, event_data, payload, doc_path, doc_re
         "sourceEventRef": doc_path,
         "sourceEntityRef": payload.get("source_entity_ref"),
         "sourceEntityType": payload.get("source_entity_type"),
-        "validationStatus": "absent",
+        "validationStatus": update_fields.get("validationStatus"),
         "reviewRequested": False,
         "reviewRequestedAt": None,
         "reviewResolved": False,
@@ -535,7 +548,10 @@ def _handle_timeline_create_for_absent(tl, event_data, payload, doc_path, doc_re
         "createdAt": event_data.get("occurredAt"),
         "updatedAt": None,
     })
-    print(f"OK: event={event_data.get('eventId')} channel=timeline action=create_for_absent")
+    print(
+        f"OK: event={event_data.get('eventId')} channel=timeline "
+        f"action=create_fallback status={update_fields.get('validationStatus')}"
+    )
 
 
 def _handle_calendar(rule, event_data, payload, doc_path, db):
