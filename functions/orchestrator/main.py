@@ -13,7 +13,16 @@ from datetime import datetime, timezone
 import firebase_admin
 from firebase_admin import credentials as _creds
 from firebase_admin import firestore
-from firebase_functions import firestore_fn
+from firebase_functions import firestore_fn, options
+
+# Runtime options for `firebase deploy` (region/memory/timeout/SA).
+# Must be set BEFORE the @firestore_fn decorator is applied.
+options.set_global_options(
+    region="us-east1",
+    memory=options.MemoryOption.MB_256,
+    timeout_sec=30,
+    service_account="fn-send-email@spartacus-artes-marciais.iam.gserviceaccount.com",
+)
 
 # When running inside Firebase Emulator, firebase-admin's initialize_app()
 # tries google.auth.default() which fails without ADC. Provide an anonymous

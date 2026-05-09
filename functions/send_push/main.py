@@ -20,7 +20,15 @@ from urllib.error import HTTPError, URLError
 import firebase_admin
 from firebase_admin import credentials as _creds
 from firebase_admin import firestore
-from firebase_functions import firestore_fn
+from firebase_functions import firestore_fn, options
+
+# Runtime options for `firebase deploy` (region/memory/timeout/SA).
+options.set_global_options(
+    region="us-east1",
+    memory=options.MemoryOption.MB_256,
+    timeout_sec=30,
+    service_account="fn-send-email@spartacus-artes-marciais.iam.gserviceaccount.com",
+)
 
 if os.environ.get("FUNCTIONS_EMULATOR"):
     os.environ.setdefault("FIRESTORE_EMULATOR_HOST", "localhost:8080")
