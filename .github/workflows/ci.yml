@@ -226,6 +226,12 @@ jobs:
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
 
+      - name: Create venv for send-email codebase
+        run: |
+          cd functions/send_email
+          python3.12 -m venv venv
+          venv/bin/pip install --quiet -r requirements.txt
+
       - name: Deploy send-email codebase
         run: |
           firebase deploy \
@@ -262,6 +268,12 @@ jobs:
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
 
+      - name: Create venv for orchestrator codebase
+        run: |
+          cd functions/orchestrator
+          python3.12 -m venv venv
+          venv/bin/pip install --quiet -r requirements.txt
+
       - name: Deploy orchestrator codebase
         run: |
           firebase deploy \
@@ -297,6 +309,12 @@ jobs:
 
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
+
+      - name: Create venv for send-push codebase
+        run: |
+          cd functions/send_push
+          python3.12 -m venv venv
+          venv/bin/pip install --quiet -r requirements.txt
 
       - name: Deploy send-push codebase
         run: |
