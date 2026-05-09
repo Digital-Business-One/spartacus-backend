@@ -10,7 +10,21 @@ import os
 import firebase_admin
 from firebase_admin import credentials as _creds
 from firebase_admin import firestore
-from firebase_functions import firestore_fn
+from firebase_functions import firestore_fn, options
+from firebase_functions.params import SecretParam
+
+# SendGrid API key — bound as a Secret Manager secret in production,
+# read from env var in the emulator.
+SENDGRID_API_KEY = SecretParam("SENDGRID_API_KEY")
+
+# Runtime options for `firebase deploy` (region/memory/timeout/SA + secrets).
+options.set_global_options(
+    region="us-east1",
+    memory=options.MemoryOption.MB_256,
+    timeout_sec=30,
+    service_account="fn-send-email@spartacus-artes-marciais.iam.gserviceaccount.com",
+    secrets=[SENDGRID_API_KEY],
+)
 
 if os.environ.get("FUNCTIONS_EMULATOR"):
     os.environ.setdefault("FIRESTORE_EMULATOR_HOST", "localhost:8080")
@@ -32,8 +46,6 @@ else:
     firebase_admin.initialize_app()
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import From, Mail, To
-
-SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 
 
 @firestore_fn.on_document_created(document="notifications/{docId}")
@@ -68,10 +80,14 @@ def send_email(
     if isinstance(data, dict):
         data["subject"] = subject
 
+    # SecretParam.value resolves to the runtime env var (bound from Secret
+    # Manager in prod; from docker-compose env in the emulator).
+    api_key = SENDGRID_API_KEY.value
+
     # Dev fallback: no SendGrid key → log the email (including any CTA link)
     # instead of actually sending. When a real key is present, always send —
     # this lets developers test the full pipeline end-to-end against SendGrid.
-    if not SENDGRID_API_KEY:
+    if not api_key:
         print("─" * 60)
         print(f"[LOCAL EMAIL] event={event_id}")
         print(f"  to:      {to_email}")
@@ -91,7 +107,7 @@ def send_email(
     message.dynamic_template_data = data
 
     try:
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        sg = SendGridAPIClient(api_key)
         response = sg.send(message)
         print(
             f"OK: event={event_id} "

@@ -191,7 +191,13 @@ jobs:
             --platform=managed \
             --quiet
 
-  # ─── Deploy → Cloud Function: send-email ─────────────────────────────────────
+  # ─── Deploy → Cloud Functions (via firebase-tools) ───────────────────────────
+  # Uses `firebase deploy --only functions:<codebase>` against firebase.json so
+  # the @firestore_fn decorators (firebase-functions Python SDK) are discovered
+  # the same way the local emulator does. Required: deploys via raw
+  # `gcloud functions deploy` don't run firebase-functions discovery and the
+  # runtime falls back to the legacy (data, context) signature, breaking the
+  # entry point with TypeError. See dev/main #orchestrator-bug for context.
   deploy-fn-send-email:
     name: Deploy → send-email
     needs: [test, changes]
@@ -209,28 +215,25 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Deploy Cloud Function send-email
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy send-email codebase
         run: |
-          gcloud functions deploy send-email \
-            --gen2 \
-            --runtime python312 \
-            --region ${{ env.REGION }} \
-            --source ./functions/send_email \
-            --entry-point send_email \
-            --trigger-event-filters="type=google.cloud.firestore.document.v1.created" \
-            --trigger-event-filters="database=(default)" \
-            --trigger-event-filters-path-pattern="document=notifications/{docId}" \
-            --trigger-location=${{ env.REGION }} \
-            --service-account fn-send-email@${{ secrets.FIREBASE_PROJECT_ID }}.iam.gserviceaccount.com \
-            --set-secrets SENDGRID_API_KEY=SENDGRID_API_KEY:latest \
-            --memory 256Mi \
-            --timeout 30s \
-            --quiet
+          firebase deploy \
+            --only functions:send-email \
+            --project ${{ secrets.FIREBASE_PROJECT_ID }} \
+            --non-interactive \
+            --force
 
-  # ─── Deploy → Cloud Function: event-orchestrator ────────────────────────────
   deploy-fn-orchestrator:
     name: Deploy → event-orchestrator
     needs: [test, changes]
@@ -248,27 +251,25 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Deploy Cloud Function event-orchestrator
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy orchestrator codebase
         run: |
-          gcloud functions deploy event-orchestrator \
-            --gen2 \
-            --runtime python312 \
-            --region ${{ env.REGION }} \
-            --source ./functions/orchestrator \
-            --entry-point event_orchestrator \
-            --trigger-event-filters="type=google.cloud.firestore.document.v1.created" \
-            --trigger-event-filters="database=(default)" \
-            --trigger-event-filters-path-pattern="document=events/{docId}" \
-            --trigger-location=${{ env.REGION }} \
-            --service-account fn-send-email@${{ secrets.FIREBASE_PROJECT_ID }}.iam.gserviceaccount.com \
-            --memory 256Mi \
-            --timeout 30s \
-            --quiet
+          firebase deploy \
+            --only functions:orchestrator \
+            --project ${{ secrets.FIREBASE_PROJECT_ID }} \
+            --non-interactive \
+            --force
 
-  # ─── Deploy → Cloud Function: send-push (RFC-11) ──────────────────────────
   deploy-fn-send-push:
     name: Deploy → send-push
     needs: [test, changes]
@@ -286,25 +287,24 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Deploy Cloud Function send-push
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy send-push codebase
         run: |
-          gcloud functions deploy send-push \
-            --gen2 \
-            --runtime python312 \
-            --region ${{ env.REGION }} \
-            --source ./functions/send_push \
-            --entry-point send_push \
-            --trigger-event-filters="type=google.cloud.firestore.document.v1.created" \
-            --trigger-event-filters="database=(default)" \
-            --trigger-event-filters-path-pattern="document=push_queue/{docId}" \
-            --trigger-location=${{ env.REGION }} \
-            --service-account fn-send-email@${{ secrets.FIREBASE_PROJECT_ID }}.iam.gserviceaccount.com \
-            --memory 256Mi \
-            --timeout 30s \
-            --quiet
+          firebase deploy \
+            --only functions:send-push \
+            --project ${{ secrets.FIREBASE_PROJECT_ID }} \
+            --non-interactive \
+            --force
 
   # ─── Seed (manual via workflow_dispatch) ────────────────────────────────────
   seed:

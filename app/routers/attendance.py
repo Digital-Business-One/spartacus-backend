@@ -58,6 +58,7 @@ def confirm_attendance(data: AttendanceActionRequest) -> AttendanceActionOut:
         actor_uid=ctx.user_id,
         source=data.source or "manual",
         aula_id=data.aula_id,
+        force=data.force,
     )
     if event:
         publisher.publish(event, project_id=ctx.project_id, source="attendance_service")
@@ -80,6 +81,7 @@ def reject_attendance(data: AttendanceActionRequest) -> AttendanceActionOut:
         actor_uid=ctx.user_id,
         reason=data.reason,
         aula_id=data.aula_id,
+        force=data.force,
     )
     if event:
         publisher.publish(event, project_id=ctx.project_id, source="attendance_service")

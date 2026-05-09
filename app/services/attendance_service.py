@@ -526,11 +526,18 @@ class AttendanceService:
                 break
 
         aula_id: str | None = None
+        lookup_aula_ids: list[str] = []
+        ymd = today.strftime("%Y%m%d")
         if today_slot:
             start = today_slot.get("startTime", "")
-            ymd = today.strftime("%Y%m%d")
             hhmm = start.replace(":", "")
             aula_id = f"{class_id}_{ymd}_{hhmm}"
+            lookup_aula_ids.append(aula_id)
+        # Also consider retroactive records for this class + day, so that
+        # on off-schedule days the dashboard still surfaces the entries
+        # created via force-confirm. aula_id stays null in the response to
+        # signal "off-schedule" to the UI.
+        lookup_aula_ids.append(f"{class_id}_{ymd}_retroactive")
 
         # Modality name
         modality_id = class_data.get("modalityId", "")
@@ -563,13 +570,13 @@ class AttendanceService:
             .stream()
         )
 
-        # Today's attendance docs for this aula (if aula resolved)
+        # Today's attendance docs (scheduled + retroactive aulas)
         att_by_user: dict[str, dict] = {}
-        if aula_id:
+        for lookup_id in lookup_aula_ids:
             att_query = (
                 db.collection(self._ATTENDANCE)
                 .where("projectId", "==", project_id)
-                .where("aulaId", "==", aula_id)
+                .where("aulaId", "==", lookup_id)
             )
             for doc in att_query.stream():
                 data = doc.to_dict()
@@ -659,6 +666,7 @@ class AttendanceService:
         actor_uid: str,
         source: str = "manual",
         aula_id: str | None = None,
+        force: bool = False,
     ) -> tuple[AttendanceActionOut, DomainEvent | None]:
         """Mark attendance as confirmed for today. Creates doc if missing."""
         db = firestore.client()
@@ -669,10 +677,18 @@ class AttendanceService:
             db, project_id, class_id, now.date(),
         )
         if not resolved_aula_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Sem aula agendada para hoje nessa turma",
+            if not force:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Sem aula agendada para hoje nessa turma",
+                )
+            # Retroactive: synthesize a deterministic aula id so multiple
+            # retroactive entries for the same class on the same day share
+            # the aula. Source is tagged so audits can spot these later.
+            resolved_aula_id = (
+                f"{class_id}_{now.strftime('%Y%m%d')}_retroactive"
             )
+            source = "retroactive"
 
         self._ensure_aula(
             db, project_id, class_id, resolved_aula_id, now,
@@ -750,6 +766,7 @@ class AttendanceService:
         actor_uid: str,
         reason: str | None = None,
         aula_id: str | None = None,
+        force: bool = False,
     ) -> tuple[AttendanceActionOut, DomainEvent | None]:
         """Reject a registered check-in. Card returns to 'Ausente' column."""
         db = firestore.client()
@@ -760,9 +777,13 @@ class AttendanceService:
             db, project_id, class_id, now.date(),
         )
         if not resolved_aula_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Sem aula agendada para hoje nessa turma",
+            if not force:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Sem aula agendada para hoje nessa turma",
+                )
+            resolved_aula_id = (
+                f"{class_id}_{now.strftime('%Y%m%d')}_retroactive"
             )
 
         existing = list(

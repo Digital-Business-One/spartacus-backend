@@ -115,6 +115,11 @@ class AttendanceActionRequest(BaseModel):
     aula_id: Optional[str] = None            # server resolves today's aula if omitted
     source: Optional[str] = "manual"         # "qr" | "manual"
     reason: Optional[str] = None             # for rejections
+    # When True, bypass the "aula agendada para hoje" check and create a
+    # retroactive attendance record. Restricted by role at the router layer
+    # (teacher/instructor/assistant/owner). Used when a class happens off
+    # its scheduled day and staff wants to record attendance anyway.
+    force: bool = False
 
 
 class AttendanceActionOut(BaseModel):
