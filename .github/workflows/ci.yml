@@ -118,26 +118,38 @@ jobs:
           CHANGED=$(git diff --name-only HEAD~1 HEAD)
           echo "Changed files:"
           echo "$CHANGED"
-          # backend = anything outside functions/
+
+          # Shared files affecting all function deploys (firebase.json
+          # declares all codebases; .firebaserc and storage.rules are
+          # consumed by `firebase deploy`; the workflow itself drives
+          # the deploy steps).
+          SHARED_RE='^(firebase\.json|\.firebaserc|storage\.rules|\.github/workflows/ci\.yml)$'
+          if echo "$CHANGED" | grep -qE "$SHARED_RE"; then
+            SHARED=true
+          else
+            SHARED=false
+          fi
+
+          # backend = anything outside functions/ AND not a shared-only file
           if echo "$CHANGED" | grep -qvE '^functions/'; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
           else
             echo "backend=false" >> "$GITHUB_OUTPUT"
           fi
-          # fn_send_email = changes inside functions/send_email/
-          if echo "$CHANGED" | grep -qE '^functions/send_email/'; then
+          # fn_send_email = changes inside functions/send_email/ OR shared
+          if [ "$SHARED" = "true" ] || echo "$CHANGED" | grep -qE '^functions/send_email/'; then
             echo "fn_send_email=true" >> "$GITHUB_OUTPUT"
           else
             echo "fn_send_email=false" >> "$GITHUB_OUTPUT"
           fi
-          # fn_orchestrator = changes inside functions/orchestrator/
-          if echo "$CHANGED" | grep -qE '^functions/orchestrator/'; then
+          # fn_orchestrator = changes inside functions/orchestrator/ OR shared
+          if [ "$SHARED" = "true" ] || echo "$CHANGED" | grep -qE '^functions/orchestrator/'; then
             echo "fn_orchestrator=true" >> "$GITHUB_OUTPUT"
           else
             echo "fn_orchestrator=false" >> "$GITHUB_OUTPUT"
           fi
-          # fn_send_push = changes inside functions/send_push/
-          if echo "$CHANGED" | grep -qE '^functions/send_push/'; then
+          # fn_send_push = changes inside functions/send_push/ OR shared
+          if [ "$SHARED" = "true" ] || echo "$CHANGED" | grep -qE '^functions/send_push/'; then
             echo "fn_send_push=true" >> "$GITHUB_OUTPUT"
           else
             echo "fn_send_push=false" >> "$GITHUB_OUTPUT"
