@@ -1,3 +1,4 @@
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Header, UploadFile
@@ -148,6 +149,8 @@ async def upload_photo(
     photo_url = await StorageService().upload_avatar(
         target_uid, file,
     )
+    sep = "&" if "?" in photo_url else "?"
+    photo_url = f"{photo_url}{sep}v={int(time.time())}"
 
     db = firestore.client()
     db.collection("users").document(target_uid).update(
