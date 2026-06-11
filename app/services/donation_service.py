@@ -3,19 +3,28 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from firebase_admin import firestore
 
-from app.events.models import DomainEvent, DonationRegisteredPayload
+from app.events.models import (
+    DomainEvent,
+    DonationRegisteredPayload,
+    ValidationPayload,
+)
 from app.logging.decorator import log
+from app.models.account import GraduationEntry
 from app.models.donation import (
     ITEM_LABELS,
     DonationConfig,
     DonationConfigItem,
     DonationConfigUpdate,
     DonationCreate,
+    DonationDashboardOut,
     DonationHistoryItem,
     DonationHistoryOut,
     DonationOut,
+    DonationRegisterReceived,
+    DonationStudentCard,
 )
 from app.services.account_history_service import AccountHistoryService
+from app.services.attendance_service import _calc_age, _initials
 
 
 def _current_month() -> str:
@@ -375,6 +384,217 @@ class DonationService:
             ref.update(updates)
 
         return self.get_config(project_id)
+
+    # ── Dashboard de doações (kanban) ────────────────────────────────
+
+    @log
+    def dashboard(self, project_id: str) -> DonationDashboardOut:
+        """All students of the project + donation status for the month.
+
+        Status per student: "none" (no donation, or rejected), "pledged"
+        (registered, waiting approval) or "received" (approved).
+        """
+        db = firestore.client()
+        month = _current_month()
+
+        memberships = (
+            db.collection("memberships")
+            .where("projectId", "==", project_id)
+            .where("status", "==", "active")
+            .stream()
+        )
+        student_uids: list[str] = []
+        seen: set[str] = set()
+        for m in memberships:
+            md = m.to_dict()
+            uid = md.get("userId", "")
+            if not uid or uid in seen:
+                continue
+            if "student" not in (md.get("roles") or []):
+                continue
+            seen.add(uid)
+            student_uids.append(uid)
+
+        don_by_user: dict[str, dict] = {}
+        donations = (
+            db.collection(self._DONATIONS)
+            .where("projectId", "==", project_id)
+            .where("month", "==", month)
+            .stream()
+        )
+        for d in donations:
+            dd = d.to_dict()
+            don_by_user[dd.get("userId", "")] = {"id": d.id, **dd}
+
+        cards: list[DonationStudentCard] = []
+        if student_uids:
+            refs = [
+                db.collection("users").document(u) for u in student_uids
+            ]
+            for doc in db.get_all(refs):
+                if not doc.exists:
+                    continue
+                ud = doc.to_dict()
+                don = don_by_user.get(doc.id)
+                status = "none"
+                if don and don.get("status") in ("pledged", "received"):
+                    status = don["status"]
+                item = don.get("item") if don else None
+
+                graduation_raw = ud.get("graduation") or {}
+                graduation = {
+                    k: GraduationEntry(
+                        belt=v.get("belt", ""),
+                        degree=v.get("degree", 0),
+                        prajied=v.get("prajied"),
+                    )
+                    for k, v in graduation_raw.items()
+                    if isinstance(v, dict)
+                } or None
+
+                cards.append(DonationStudentCard(
+                    user_id=doc.id,
+                    name=ud.get("name", ""),
+                    initials=_initials(ud.get("name", "")),
+                    age=_calc_age(ud.get("birthDate")),
+                    photo_url=ud.get("photoUrl"),
+                    is_dependent=bool(ud.get("guardianUid")),
+                    guardian_uid=ud.get("guardianUid"),
+                    guardian_name=None,
+                    graduation=graduation,
+                    status=status,
+                    donation_id=don.get("id") if don else None,
+                    item=item,
+                    item_label=(
+                        ITEM_LABELS.get(item, item) if item else None
+                    ),
+                    item_description=(
+                        don.get("itemDescription") if don else None
+                    ),
+                    registered_at=don.get("createdAt") if don else None,
+                    validated_at=don.get("validatedAt") if don else None,
+                ))
+
+        # Resolve guardian names for dependents (batch fetch)
+        guardian_uids = {c.guardian_uid for c in cards if c.guardian_uid}
+        if guardian_uids:
+            refs = [
+                db.collection("users").document(g) for g in guardian_uids
+            ]
+            names = {
+                d.id: d.to_dict().get("name")
+                for d in db.get_all(refs)
+                if d.exists
+            }
+            for c in cards:
+                if c.guardian_uid:
+                    c.guardian_name = names.get(c.guardian_uid)
+
+        cards.sort(key=lambda c: c.name.lower())
+        return DonationDashboardOut(
+            month=month,
+            month_label=self._format_month_label(month),
+            students=cards,
+        )
+
+    @log
+    def register_received(
+        self,
+        project_id: str,
+        actor_uid: str,
+        data: DonationRegisterReceived,
+    ) -> tuple[DonationOut, DomainEvent]:
+        """Staff registers a donation on behalf of a student, already
+        approved (dashboard column 1 → 3, like attendance force-confirm).
+
+        Updates the month's existing donation doc if there is one
+        (e.g., a rejected donation being re-registered), otherwise
+        creates it directly as received.
+        """
+        db = firestore.client()
+        month = _current_month()
+        now = datetime.now(timezone.utc).isoformat()
+        target_uid = data.user_id
+
+        user_doc = db.collection("users").document(target_uid).get()
+        if not user_doc.exists:
+            raise HTTPException(
+                status_code=404, detail="Aluno não encontrado",
+            )
+        user_name = user_doc.to_dict().get("name", "")
+        actor_doc = db.collection("users").document(actor_uid).get()
+        actor_name = (
+            actor_doc.to_dict().get("name", "") if actor_doc.exists else ""
+        )
+
+        item_label = ITEM_LABELS.get(data.item, data.item)
+        desc = data.item_description or ""
+        label = f"{item_label}: {desc}" if desc else item_label
+
+        update_fields = {
+            "item": data.item,
+            "itemDescription": data.item_description,
+            "status": "received",
+            "receivedAt": now,
+            "receivedBy": actor_uid,
+            "validatedBy": actor_uid,
+            "validatedAt": now,
+        }
+        existing = list(
+            db.collection(self._DONATIONS)
+            .where("projectId", "==", project_id)
+            .where("userId", "==", target_uid)
+            .where("month", "==", month)
+            .limit(1)
+            .stream()
+        )
+        if existing:
+            ref = existing[0].reference
+            created_at = existing[0].to_dict().get("createdAt", now)
+            ref.update(update_fields)
+        else:
+            created_at = now
+            _, ref = db.collection(self._DONATIONS).add({
+                "projectId": project_id,
+                "userId": target_uid,
+                "actingAs": None,
+                "month": month,
+                "createdAt": now,
+                **update_fields,
+            })
+
+        AccountHistoryService().record(
+            uid=target_uid,
+            project_id=project_id,
+            event_type="donation",
+            event_subtype="received",
+            actor_uid=actor_uid,
+            actor_name=actor_name,
+            actor_roles=[],
+            description=f"Doação registrada e validada: {label}",
+        )
+
+        event = DomainEvent(
+            id="donation.received",
+            payload=ValidationPayload(
+                entity_id=ref.id,
+                target_uid=target_uid,
+                target_name=user_name,
+                validated_by=actor_uid,
+                validated_at=now,
+                donation_amount=label,
+            ),
+        )
+
+        return DonationOut(
+            id=ref.id,
+            item=data.item,
+            item_label=item_label,
+            item_description=data.item_description,
+            month=month,
+            status="received",
+            created_at=created_at,
+        ), event
 
     # ── Helpers ──────────────────────────────────────────────────────
 

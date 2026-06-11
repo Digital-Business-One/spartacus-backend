@@ -8,8 +8,10 @@ from app.models.donation import (
     DonationConfig,
     DonationConfigUpdate,
     DonationCreate,
+    DonationDashboardOut,
     DonationHistoryOut,
     DonationOut,
+    DonationRegisterReceived,
 )
 from app.security.context import auth_ctx
 from app.security.decorator import require_roles
@@ -29,6 +31,31 @@ def create_donation(
         project_id=ctx.project_id,
         uid=ctx.user_id,
         acting_as=x_acting_as,
+        data=data,
+    )
+    publisher.publish(
+        event, project_id=ctx.project_id, source="donation_service",
+    )
+    return result
+
+
+@log
+@router.get("/donations/dashboard")
+@require_roles("owner", "assistant", "teacher", "instructor")
+def get_donations_dashboard() -> DonationDashboardOut:
+    ctx = auth_ctx.get()
+    return DonationService().dashboard(ctx.project_id)
+
+
+@log
+@router.post("/donations/register-received", status_code=201)
+@require_roles("owner", "assistant", "teacher", "instructor")
+def register_received_donation(data: DonationRegisterReceived) -> DonationOut:
+    """Staff registers an already-received donation for a student."""
+    ctx = auth_ctx.get()
+    result, event = DonationService().register_received(
+        project_id=ctx.project_id,
+        actor_uid=ctx.user_id,
         data=data,
     )
     publisher.publish(

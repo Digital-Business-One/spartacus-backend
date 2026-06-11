@@ -3,6 +3,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
 
+from app.models.account import GraduationEntry
+
 DonationItem = Literal[
     "food_1kg", "cookies", "coffee", "juice", "other",
 ]
@@ -76,6 +78,64 @@ class DonationHistoryOut(BaseModel):
 
     donations: list[DonationHistoryItem]
 
+
+
+class DonationStudentCard(BaseModel):
+    """Single student visible in the donations dashboard columns."""
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel,
+    )
+
+    user_id: str
+    name: str
+    initials: str
+    age: Optional[int] = None
+    photo_url: Optional[str] = None
+    is_dependent: bool = False
+    guardian_uid: Optional[str] = None
+    guardian_name: Optional[str] = None
+    graduation: Optional[dict[str, GraduationEntry]] = None
+    # Donation state for the month
+    # values: "none" | "pledged" | "received"
+    # (an "absent"/rejected donation appears as "none" in the UI)
+    status: str = "none"
+    donation_id: Optional[str] = None
+    item: Optional[str] = None
+    item_label: Optional[str] = None
+    item_description: Optional[str] = None
+    registered_at: Optional[str] = None
+    validated_at: Optional[str] = None
+
+
+class DonationDashboardOut(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel,
+    )
+
+    month: str          # "2026-06"
+    month_label: str    # "Junho / 2026"
+    students: list[DonationStudentCard]
+
+
+class DonationRegisterReceived(BaseModel):
+    """Staff registers a donation on behalf of a student, already received."""
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel,
+    )
+
+    user_id: str
+    item: DonationItem
+    item_description: Optional[str] = None
+
+    @model_validator(mode="after")
+    def desc_required_for_other(self) -> "DonationRegisterReceived":
+        if self.item == "other" and not self.item_description:
+            raise ValueError(
+                "Descrição obrigatória para 'Outra forma de apoio'"
+            )
+        return self
 
 
 class DonationConfigItem(BaseModel):
