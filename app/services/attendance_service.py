@@ -8,6 +8,7 @@ from firebase_admin import firestore
 
 from app.events.models import DomainEvent, ValidationPayload
 from app.logging.decorator import log
+from app.models.account import GraduationEntry
 from app.models.attendance import (
     AttendanceActionOut,
     AttendanceDashboardOut,
@@ -610,6 +611,16 @@ class AttendanceService:
                 confirmed_at = att.get("validatedAt")
 
             age = _calc_age(ud.get("birthDate"))
+            graduation_raw = ud.get("graduation") or {}
+            graduation = {
+                k: GraduationEntry(
+                    belt=v.get("belt", ""),
+                    degree=v.get("degree", 0),
+                    prajied=v.get("prajied"),
+                )
+                for k, v in graduation_raw.items()
+                if isinstance(v, dict)
+            } or None
             students.append(
                 StudentAttendanceCard(
                     user_id=uid,
@@ -622,6 +633,7 @@ class AttendanceService:
                     is_dependent=bool(ud.get("guardianUid")),
                     guardian_uid=ud.get("guardianUid"),
                     guardian_name=None,
+                    graduation=graduation,
                     status=status,
                     attendance_id=attendance_id,
                     source=source,
