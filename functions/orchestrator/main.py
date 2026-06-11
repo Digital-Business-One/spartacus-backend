@@ -62,7 +62,7 @@ EVENT_RULES: dict[str, dict] = {
     # ══ POSTS (post, event, championship) ═════════════════════════════════════
 
     "post.created": {
-        "channels": ["timeline", "calendar"],
+        "channels": ["timeline", "calendar", "push"],
         "timeline": {
             "action": "create",
             "visibility": "public",
@@ -71,6 +71,12 @@ EVENT_RULES: dict[str, dict] = {
         "calendar": {
             "action": "create",
             "only_types": ["event", "championship"],
+        },
+        "push": {
+            "target": "all_members",
+            "exclude_author": True,
+            "title_template": "{author_name}",
+            "body_template": "{title}",
         },
     },
     "post.updated": {
@@ -188,7 +194,11 @@ EVENT_RULES: dict[str, dict] = {
     "donation.received": {
         "channels": ["timeline", "push"],
         "timeline": {
-            "action": "update",
+            # update_or_create: staff can register an already-received
+            # donation with no prior donation.registered timeline entry
+            "action": "update_or_create",
+            "type": "donation",
+            "visibility": "personal_and_staff",
             "id_prefix": "doacao",
             "update_fields": {"validationStatus": "confirmed"},
         },
@@ -369,6 +379,24 @@ def _resolve_staff_uids(db, project_id: str) -> list[str]:
         data = m.to_dict()
         if staff_roles & set(data.get("roles", [])):
             uids.append(data["userId"])
+    return uids
+
+
+def _resolve_all_member_uids(db, project_id: str) -> list[str]:
+    """All active member UIDs for a project (any role), deduplicated."""
+    memberships = (
+        db.collection("memberships")
+        .where("projectId", "==", project_id)
+        .where("status", "==", "active")
+        .stream()
+    )
+    seen: set[str] = set()
+    uids: list[str] = []
+    for m in memberships:
+        uid = m.to_dict().get("userId", "")
+        if uid and uid not in seen:
+            seen.add(uid)
+            uids.append(uid)
     return uids
 
 
@@ -622,6 +650,11 @@ def _handle_push(rule, event_data, payload, doc_path, db):
             recipients.extend(_resolve_guardians(db, target_uid, project_id))
     elif target in ("staff", "staff_actionable"):
         recipients = _resolve_staff_uids(db, project_id)
+    elif target == "all_members":
+        recipients = _resolve_all_member_uids(db, project_id)
+        if push.get("exclude_author"):
+            author_uid = payload.get("author_uid", "")
+            recipients = [uid for uid in recipients if uid != author_uid]
 
     title = _safe_format(push.get("title_template", ""), payload)
     body = _safe_format(push.get("body_template", ""), payload)

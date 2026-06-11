@@ -7,6 +7,7 @@ from firebase_admin import firestore
 from app.domain.enums import ValidationStatus
 from app.events.models import DomainEvent, ReviewRequestedPayload, ValidationPayload
 from app.logging.decorator import log
+from app.models.donation import ITEM_LABELS
 from app.services.account_history_service import AccountHistoryService
 
 
@@ -21,6 +22,14 @@ class ValidationService:
         ValidationStatus.RECEIVED,
         ValidationStatus.ABSENT,
     )
+
+    @staticmethod
+    def _donation_label(data: dict) -> str:
+        """Human label for a donation doc — mirrors DonationService.create."""
+        item = data.get("item", "")
+        item_label = ITEM_LABELS.get(item, item)
+        desc = data.get("itemDescription") or ""
+        return f"{item_label}: {desc}" if desc else item_label
 
     @staticmethod
     def _describe_validation(
@@ -116,7 +125,10 @@ class ValidationService:
                 validated_by=actor_uid,
                 validated_at=now,
                 turma_name=data.get("turmaName", ""),
-                donation_amount=data.get("amount", ""),
+                donation_amount=(
+                    self._donation_label(data)
+                    if collection == "donations" else ""
+                ),
             ),
         )
 
@@ -168,7 +180,10 @@ class ValidationService:
                 target_name=data.get("userName", ""),
                 review_requested_at=now,
                 turma_name=data.get("turmaName", ""),
-                donation_amount=data.get("amount", ""),
+                donation_amount=(
+                    self._donation_label(data)
+                    if collection == "donations" else ""
+                ),
             ),
         )
 

@@ -178,19 +178,19 @@ class ValidationPayload:
     donation_amount: str = ""
 
     def personalization(self) -> dict:
-        d = {
+        # turma_name / donation_amount always present, even empty —
+        # push templates reference them and _safe_format would otherwise
+        # leak the raw "{placeholder}" to the user.
+        return {
             "entity_id": self.entity_id,
             "target_uid": self.target_uid,
             "target_name": self.target_name,
             # camelCase — orchestrator reads validatedBy/validatedAt
             "validatedBy": self.validated_by,
             "validatedAt": self.validated_at,
+            "turma_name": self.turma_name,
+            "donation_amount": self.donation_amount,
         }
-        if self.turma_name:
-            d["turma_name"] = self.turma_name
-        if self.donation_amount:
-            d["donation_amount"] = self.donation_amount
-        return d
 
 
 @dataclass
@@ -205,17 +205,14 @@ class ReviewRequestedPayload:
     donation_amount: str = ""
 
     def personalization(self) -> dict:
-        d = {
+        return {
             "entity_id": self.entity_id,
             "target_uid": self.target_uid,
             "target_name": self.target_name,
             "review_requested_at": self.review_requested_at,
+            "turma_name": self.turma_name,
+            "donation_amount": self.donation_amount,
         }
-        if self.turma_name:
-            d["turma_name"] = self.turma_name
-        if self.donation_amount:
-            d["donation_amount"] = self.donation_amount
-        return d
 
 
 @dataclass

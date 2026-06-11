@@ -38,21 +38,25 @@ def main() -> None:
 
     db = firestore.client()
 
-    # Import the orchestrator logic
-    spec = importlib.util.spec_from_file_location(
-        "orchestrator",
-        os.path.join(
-            os.path.dirname(__file__), "..", "functions",
-            "orchestrator", "main.py",
-        ),
-    )
-    mod = importlib.util.module_from_spec(spec)
+    def _load_function_module(name: str) -> object:
+        """Load a Cloud Function module without re-initializing firebase."""
+        spec = importlib.util.spec_from_file_location(
+            name,
+            os.path.join(
+                os.path.dirname(__file__), "..", "functions", name, "main.py",
+            ),
+        )
+        mod = importlib.util.module_from_spec(spec)
+        original_init = firebase_admin.initialize_app
+        firebase_admin.initialize_app = lambda *a, **kw: None
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            firebase_admin.initialize_app = original_init
+        return mod
 
-    # Patch initialize_app to avoid double-init
-    original_init = firebase_admin.initialize_app
-    firebase_admin.initialize_app = lambda *a, **kw: None
-    spec.loader.exec_module(mod)
-    firebase_admin.initialize_app = original_init
+    mod = _load_function_module("orchestrator")
+    push_mod = _load_function_module("send_push")
 
     EVENT_RULES = mod.EVENT_RULES
     _now = mod._now
@@ -60,6 +64,60 @@ def main() -> None:
     _handle_timeline = mod._handle_timeline
     _handle_calendar = mod._handle_calendar
     _handle_push = mod._handle_push
+    _get_user_tokens = push_mod._get_user_tokens
+    _send_to_expo = push_mod._send_to_expo
+
+    def process_push_queue() -> None:
+        """Send pending push_queue docs via Expo (replaces send_push fn)."""
+        pending = (
+            db.collection("push_queue")
+            .where("status", "==", "pending")
+            .stream()
+        )
+        for doc in pending:
+            fields = doc.to_dict()
+            to_uid = fields.get("to_uid", "")
+            title = fields.get("title", "")
+            body = fields.get("body", "")
+            data = fields.get("data", {}) or {}
+            source_event_ref = fields.get("source_event_ref", "")
+
+            if not to_uid or not title:
+                doc.reference.update({"status": "skipped"})
+                continue
+
+            tokens = _get_user_tokens(db, to_uid)
+            if not tokens:
+                doc.reference.update({"status": "no_token"})
+                print(f"  PUSH no_token: to_uid={to_uid}")
+                continue
+
+            messages = [
+                {
+                    "to": token,
+                    "title": title,
+                    "body": body,
+                    "sound": "default",
+                    "priority": "high",
+                    "data": {
+                        "event_id": data.get("event_id", ""),
+                        "entity_type": data.get("entity_type", ""),
+                        "entity_id": data.get("entity_id", ""),
+                        "source_event_ref": source_event_ref,
+                    },
+                }
+                for token in tokens
+            ]
+            try:
+                response = _send_to_expo(messages)
+                doc.reference.update({
+                    "status": "sent",
+                    "expo_response": str(response),
+                })
+                print(f"  PUSH sent: to_uid={to_uid} tokens={len(tokens)}")
+            except Exception as e:
+                doc.reference.update({"status": "error", "error": str(e)})
+                print(f"  PUSH error: to_uid={to_uid} — {e}")
 
     print(
         f"\n{'=' * 60}\n"
@@ -138,6 +196,8 @@ def main() -> None:
                     })
 
                 processed_ids.add(doc.id)
+
+            process_push_queue()
 
         except KeyboardInterrupt:
             print("\nStopping.")
