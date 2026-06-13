@@ -182,7 +182,11 @@ class TestGetAccountDetail:
         assert data["status"] == "approved"
         assert data["authProvider"] == "password"
         assert data["graduation"] == {
-            "jiu-jitsu": {"belt": "blue", "degree": 2, "prajied": None}
+            "jiu-jitsu": {
+                "belt": "blue", "degree": 2, "prajied": None,
+                "status": "approved", "lockedByStudent": False,
+                "gradedBy": None, "gradedByName": None, "gradedAt": None,
+            }
         }
         assert data["ageCategory"] == "child"  # 12 anos
 

@@ -194,6 +194,96 @@ class ValidationPayload:
 
 
 @dataclass
+class GraduationEventPayload:
+    """Payload for graduation.approved / graduation.promoted.
+
+    Push to the student (and guardians). title/body are composed by the
+    service so one rule serves approve + degree + belt promotions.
+    """
+
+    entity_id: str
+    target_uid: str
+    target_name: str
+    author_uid: str
+    author_name: str
+    title: str
+    body: str
+
+    def personalization(self) -> dict:
+        return {
+            "entity_id": self.entity_id,
+            "source_entity_ref": f"users/{self.target_uid}",
+            "source_entity_type": "users",
+            "target_uid": self.target_uid,
+            "target_name": self.target_name,
+            "author_uid": self.author_uid,
+            "author_name": self.author_name,
+            "title": self.title,
+            "body": self.body,
+        }
+
+
+@dataclass
+class AccountModerationPayload:
+    """Payload for account.warned / account.suspended.
+
+    Drives two pushes (student + staff except author) — see orchestrator
+    rules. Carries the variables the templates reference.
+    """
+
+    entity_id: str
+    target_uid: str
+    target_name: str
+    author_uid: str
+    author_name: str
+    reason: str
+
+    def personalization(self) -> dict:
+        return {
+            "entity_id": self.entity_id,
+            "source_entity_ref": f"users/{self.target_uid}",
+            "source_entity_type": "users",
+            "target_uid": self.target_uid,
+            "target_name": self.target_name,
+            "author_uid": self.author_uid,
+            "author_name": self.author_name,
+            "reason": self.reason,
+        }
+
+
+@dataclass
+class NicknameAssignedPayload:
+    """Payload for account.nickname_assigned event.
+
+    Timeline entry (personal) + push for the user who got the nickname.
+    Title/description carry the fun message composed by the service.
+    """
+
+    entity_id: str
+    target_uid: str
+    target_name: str
+    nickname: str
+    author_uid: str
+    author_name: str
+    title: str
+    description: str
+
+    def personalization(self) -> dict:
+        return {
+            "entity_id": self.entity_id,
+            "source_entity_ref": f"users/{self.target_uid}",
+            "source_entity_type": "users",
+            "target_uid": self.target_uid,
+            "target_name": self.target_name,
+            "nickname": self.nickname,
+            "author_uid": self.author_uid,
+            "author_name": self.author_name,
+            "title": self.title,
+            "description": self.description,
+        }
+
+
+@dataclass
 class ReviewRequestedPayload:
     """Payload for checkin.review_requested, donation.review_requested."""
 

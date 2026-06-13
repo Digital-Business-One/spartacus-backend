@@ -19,6 +19,15 @@ from app.models.profile import (
 )
 
 
+def _modality_slug(key: str) -> str:
+    """Normalize a modality key to its slug.
+
+    Tolerant of legacy data where the app stored the modality *name*
+    (e.g. "Jiu-Jitsu" → "jiu-jitsu", "Muay Thai" → "muay-thai").
+    """
+    return (key or "").strip().lower().replace(" ", "-")
+
+
 def _calculate_age(birth_date_str: str) -> int | None:
     try:
         birth = datetime.strptime(birth_date_str, "%d/%m/%Y").date()
@@ -78,7 +87,13 @@ class ProfileService:
         graduation = None
         if graduation_raw and isinstance(graduation_raw, dict):
             graduation = {
-                k: GraduationEntry(**v)
+                _modality_slug(k): GraduationEntry(
+                    belt=v.get("belt", ""),
+                    degree=v.get("degree", 0),
+                    prajied=v.get("prajied"),
+                    status=v.get("status"),
+                    locked_by_student=v.get("lockedByStudent", False),
+                )
                 for k, v in graduation_raw.items()
                 if isinstance(v, dict)
             }
@@ -364,19 +379,49 @@ class ProfileService:
         acting_as: str | None,
         data: GraduationUpdate,
     ) -> None:
+        """Student's one-time graduation insert.
+
+        Keyed by modality slug (normalized). Each modality can be inserted
+        once by the student; existing entries are never overwritten here
+        (only staff change them via the graduations dashboard). New entries
+        come in as status="pending", awaiting staff approval.
+        """
         target_uid = acting_as or uid
         if acting_as:
             self._assert_guardian_of(uid, target_uid)
 
         db = firestore.client()
         ref = db.collection(self._USERS).document(target_uid)
-        if not ref.get().exists:
+        snap = ref.get()
+        if not snap.exists:
             raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
-        graduation_dict = {
-            k: v.model_dump() for k, v in data.graduation.items()
-        }
-        ref.update({"graduation": graduation_dict})
+        stored: dict = snap.to_dict().get("graduation") or {}
+        # Normalize any legacy keys (modality name) → slug, in place.
+        stored = {_modality_slug(k): v for k, v in stored.items()}
+
+        added = False
+        for raw_key, entry in data.graduation.items():
+            slug = _modality_slug(raw_key)
+            existing = stored.get(slug)
+            # Locked once inserted, EXCEPT when staff rejected it — then the
+            # student may edit and resubmit until it is approved.
+            if existing and existing.get("status") != "rejected":
+                continue
+            stored[slug] = {
+                "belt": entry.belt,
+                "degree": entry.degree or 0,
+                "prajied": entry.prajied,
+                "status": "pending",
+                "lockedByStudent": True,
+                "gradedBy": None,
+                "gradedByName": None,
+                "gradedAt": None,
+            }
+            added = True
+
+        if added:
+            ref.update({"graduation": stored})
 
     # ── Competition ──────────────────────────────────────────────────────
 

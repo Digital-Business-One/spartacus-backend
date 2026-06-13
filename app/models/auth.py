@@ -192,3 +192,4 @@ class MeResponse(BaseModel):
     email: str
     approval_status: str
     birth_date: Optional[str] = None
+    roles: list[str] = []  # roles do usuário no projeto do header

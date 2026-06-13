@@ -136,3 +136,70 @@ class TestResolveAllMemberUids:
         db, _ = _make_db(["u1", "u1", "", "u2"])
         uids = orch._resolve_all_member_uids(db, "spartacus")
         assert uids == ["u1", "u2"]
+
+
+def _membership(uid, roles):
+    d = MagicMock()
+    d.to_dict.return_value = {"userId": uid, "roles": roles, "status": "active"}
+    return d
+
+
+class TestModerationFanOut:
+    """account.warned / account.suspended → student push + staff-except-author."""
+
+    def _make_db(self, members):
+        db = MagicMock()
+        docs = [_membership(uid, roles) for uid, roles in members]
+        memberships = MagicMock()
+        memberships.where.return_value.where.return_value.stream.return_value = docs
+        push_queue = MagicMock()
+        users = MagicMock()
+        # No guardians / adult student → users docs have no dependentUids
+        users.document.return_value.get.return_value = MagicMock(
+            exists=True, to_dict=MagicMock(return_value={}),
+        )
+        db.collection.side_effect = lambda name: {
+            "memberships": memberships,
+            "push_queue": push_queue,
+            "users": users,
+        }[name]
+        return db, push_queue
+
+    def test_warned_two_pushes_student_and_staff_except_author(self):
+        db, push_queue = self._make_db([
+            ("aluno-1", ["student"]),
+            ("staff-author", ["teacher"]),
+            ("staff-other", ["assistant"]),
+            ("owner-1", ["owner"]),
+        ])
+        payload = {
+            "target_uid": "aluno-1",
+            "target_name": "Júnior Silva",
+            "author_uid": "staff-author",
+            "author_name": "Prof. Carlos",
+            "reason": "Indisciplina",
+            "source_entity_type": "users",
+            "entity_id": "aluno-1",
+        }
+        orch._handle_push(
+            orch.EVENT_RULES["account.warned"],
+            {"eventId": "account.warned", "projectId": "spartacus"},
+            payload,
+            "events/evt-w",
+            db,
+        )
+        added = [c.args[0] for c in push_queue.add.call_args_list]
+        by_uid = {d["to_uid"]: d for d in added}
+
+        # Student gets the personal message
+        assert "aluno-1" in by_uid
+        assert by_uid["aluno-1"]["title"] == "Você recebeu uma advertência"
+        assert "Indisciplina" in by_uid["aluno-1"]["body"]
+
+        # Staff (except the author) get the informational message
+        assert "staff-other" in by_uid
+        assert "owner-1" in by_uid
+        assert "staff-author" not in by_uid  # autor excluído
+        assert by_uid["staff-other"]["title"] == "Advertência registrada"
+        assert "Júnior Silva" in by_uid["staff-other"]["body"]
+        assert "Prof. Carlos" in by_uid["staff-other"]["body"]

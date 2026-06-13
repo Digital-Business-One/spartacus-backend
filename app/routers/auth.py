@@ -70,6 +70,7 @@ def me() -> MeResponse:
         email=ctx.user_email,
         approval_status=user_data["approvalStatus"],
         birth_date=user_data.get("birthDate"),
+        roles=ctx.roles or [],
     )
 
 

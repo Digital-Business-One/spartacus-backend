@@ -455,6 +455,7 @@ class DonationService:
                 cards.append(DonationStudentCard(
                     user_id=doc.id,
                     name=ud.get("name", ""),
+                    nickname=ud.get("nickname"),
                     initials=_initials(ud.get("name", "")),
                     age=_calc_age(ud.get("birthDate")),
                     photo_url=ud.get("photoUrl"),
@@ -550,8 +551,11 @@ class DonationService:
         )
         if existing:
             ref = existing[0].reference
-            created_at = existing[0].to_dict().get("createdAt", now)
-            ref.update(update_fields)
+            cur = existing[0].to_dict()
+            created_at = cur.get("createdAt", now)
+            # Came from column 1 ("Sem doação") — a card here has no doc or a
+            # rejected one; either way undo should return it to column 1.
+            ref.update({**update_fields, "previousStatus": "absent"})
         else:
             created_at = now
             _, ref = db.collection(self._DONATIONS).add({
@@ -560,6 +564,7 @@ class DonationService:
                 "actingAs": None,
                 "month": month,
                 "createdAt": now,
+                "previousStatus": "absent",
                 **update_fields,
             })
 

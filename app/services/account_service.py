@@ -8,7 +8,11 @@ from app.domain.account_states import (
     find_transition,
     get_available_actions,
 )
-from app.events.models import DomainEvent
+from app.events.models import (
+    AccountModerationPayload,
+    DomainEvent,
+    NicknameAssignedPayload,
+)
 from app.logging.decorator import log
 from app.models.account import (
     AccountAction,
@@ -22,6 +26,11 @@ from app.models.account import (
     TransitionResponse,
 )
 from app.services.account_history_service import AccountHistoryService
+
+
+def _grad_slug(key: str) -> str:
+    """Normalize a graduation modality key to slug (legacy name → slug)."""
+    return (key or "").strip().lower().replace(" ", "-")
 
 
 class AccountService:
@@ -82,15 +91,20 @@ class AccountService:
         # Classes (expanded)
         classes = self._fetch_classes_detail(db, user.get("classIds", []))
 
-        # Graduation
+        # Graduation — normalize keys (legacy name → slug) + carry status
         graduation_raw = user.get("graduation") or {}
         graduation: Optional[dict[str, GraduationEntry]] = None
         if graduation_raw:
             graduation = {
-                k: GraduationEntry(
+                _grad_slug(k): GraduationEntry(
                     belt=v.get("belt", ""),
                     degree=v.get("degree", 0),
                     prajied=v.get("prajied"),
+                    status=v.get("status", "approved"),
+                    locked_by_student=v.get("lockedByStudent", False),
+                    graded_by=v.get("gradedBy"),
+                    graded_by_name=v.get("gradedByName"),
+                    graded_at=v.get("gradedAt"),
                 )
                 for k, v in graduation_raw.items()
                 if isinstance(v, dict)
@@ -136,6 +150,7 @@ class AccountService:
         return AccountDetailOut(
             uid=uid,
             name=user.get("name", ""),
+            nickname=user.get("nickname"),
             email=user.get("email"),
             email_verified=user.get("emailVerified", False),
             tax_id=user.get("taxId"),
@@ -419,12 +434,60 @@ class AccountService:
         return results
 
     @log
+    @log
+    def warn_account(
+        self,
+        project_id: str,
+        uid: str,
+        actor_uid: str,
+        reason: str,
+    ) -> DomainEvent:
+        """Register a disciplinary warning — history only, no status change.
+
+        Emits account.warned, which fans out to two pushes (the student and
+        all staff except the author). See orchestrator rules.
+        """
+        db = firestore.client()
+        user_doc = db.collection(self._USERS).document(uid).get()
+        if not user_doc.exists:
+            raise LookupError("Conta não encontrada")
+        target_name = user_doc.to_dict().get("name", "")
+
+        actor_name = ""
+        actor_doc = db.collection(self._USERS).document(actor_uid).get()
+        if actor_doc.exists:
+            actor_name = actor_doc.to_dict().get("name", "")
+
+        AccountHistoryService().record(
+            uid=uid,
+            project_id=project_id,
+            event_type="warning",
+            event_subtype="warning",
+            actor_uid=actor_uid,
+            actor_name=actor_name,
+            actor_roles=self._get_roles(db, project_id, actor_uid),
+            description=f"Advertência: {reason}",
+        )
+
+        return DomainEvent(
+            id="account.warned",
+            payload=AccountModerationPayload(
+                entity_id=uid,
+                target_uid=uid,
+                target_name=target_name,
+                author_uid=actor_uid,
+                author_name=actor_name,
+                reason=reason,
+            ),
+        )
+
     def execute_transition(
         self,
         project_id: str,
         uid: str,
         action: str,
         actor_uid: str,
+        reason: str | None = None,
     ) -> tuple[TransitionResponse, DomainEvent | None]:
         db = firestore.client()
         user_ref = db.collection(self._USERS).document(uid)
@@ -464,7 +527,10 @@ class AccountService:
         if actor_doc.exists:
             actor_name = actor_doc.to_dict().get("name", "")
 
-        # Record in history sub-collection
+        # Record in history sub-collection. Suspension carries the reason.
+        description = self._describe_transition(action, actor_name)
+        if action == "expel" and reason:
+            description = f"Suspensão: {reason}"
         AccountHistoryService().record(
             uid=uid,
             project_id=project_id,
@@ -473,7 +539,7 @@ class AccountService:
             actor_uid=actor_uid,
             actor_name=actor_name,
             actor_roles=self._get_roles(db, project_id, actor_uid),
-            description=self._describe_transition(action, actor_name),
+            description=description,
         )
 
         # If approved: activate membership + sync claims
@@ -507,10 +573,25 @@ class AccountService:
         # _auto_approve_dependents above which moves them to
         # waiting_medical_history.
 
-        # Build event for notification
-        event = self._build_event(
-            action, user, new_status, current_status
-        )
+        # Build event for notification. Suspension emits a moderation event
+        # (two pushes: student + staff except author); other actions keep
+        # their e-mail/push notification event.
+        if action == "expel":
+            event = DomainEvent(
+                id="account.suspended",
+                payload=AccountModerationPayload(
+                    entity_id=uid,
+                    target_uid=uid,
+                    target_name=user.get("name", ""),
+                    author_uid=actor_uid,
+                    author_name=actor_name,
+                    reason=reason or "",
+                ),
+            )
+        else:
+            event = self._build_event(
+                action, user, new_status, current_status
+            )
 
         return (
             TransitionResponse(
@@ -662,6 +743,78 @@ class AccountService:
         days = "/".join(day_short.get(i.get("day", ""), "") for i in items)
         first = items[0]
         return f"{days} {first.get('startTime', '')}–{first.get('endTime', '')}"
+
+    @log
+    def assign_nickname(
+        self,
+        project_id: str,
+        target_uid: str,
+        actor_uid: str,
+        nickname: str,
+    ) -> DomainEvent | None:
+        """Set (or clear) a user's nickname.
+
+        Non-empty nickname emits account.nickname_assigned — timeline entry
+        visible only to the user (and staff) + push with a fun, welcoming
+        message. Empty nickname just clears the field, no event.
+        """
+        db = firestore.client()
+        user_ref = db.collection(self._USERS).document(target_uid)
+        user_doc = user_ref.get()
+        if not user_doc.exists:
+            raise LookupError("Usuário não encontrado")
+
+        user_data = user_doc.to_dict()
+        target_name = user_data.get("name", "")
+        actor_doc = db.collection(self._USERS).document(actor_uid).get()
+        actor_name = (
+            actor_doc.to_dict().get("name", "") if actor_doc.exists else ""
+        )
+
+        user_ref.update({
+            "nickname": nickname or None,
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "lastUpdatedBy": actor_uid,
+        })
+
+        AccountHistoryService().record(
+            uid=target_uid,
+            project_id=project_id,
+            event_type="account",
+            event_subtype="nickname",
+            actor_uid=actor_uid,
+            actor_name=actor_name,
+            actor_roles=[],
+            description=(
+                f'Apelido atribuído: "{nickname}"'
+                if nickname else "Apelido removido"
+            ),
+        )
+
+        if not nickname:
+            return None
+
+        first_name = (target_name.split() or [""])[0]
+        title = f"Apelido novo na área: {nickname} 🥋"
+        description = (
+            f"Atenção, turma! {actor_name or 'A diretoria'} bateu o martelo: "
+            f"{first_name} agora também atende por \"{nickname}\". "
+            "Dizem que quem ganha apelido no tatame já é da família — "
+            "use com orgulho! 😄"
+        )
+        return DomainEvent(
+            id="account.nickname_assigned",
+            payload=NicknameAssignedPayload(
+                entity_id=f"{target_uid}_{int(datetime.now(timezone.utc).timestamp())}",
+                target_uid=target_uid,
+                target_name=target_name,
+                nickname=nickname,
+                author_uid=actor_uid,
+                author_name=actor_name,
+                title=title,
+                description=description,
+            ),
+        )
 
     def _resolve_user_name(self, db, uid: Optional[str]) -> Optional[str]:
         if not uid:
@@ -871,13 +1024,22 @@ class AccountService:
                 state=addr_data.get("state"),
             )
 
-        # Graduation (raw dict, not typed like detail page)
+        # Graduation (raw dict, not typed like detail page) — normalize keys,
+        # drop internal undo snapshot (`prev`)
         graduation_raw = user.get("graduation")
-        graduation = graduation_raw if graduation_raw else None
+        graduation = (
+            {
+                _grad_slug(k): {kk: vv for kk, vv in v.items() if kk != "prev"}
+                for k, v in graduation_raw.items()
+                if isinstance(v, dict)
+            }
+            if graduation_raw else None
+        )
 
         return AccountOut(
             uid=uid,
             name=user.get("name", ""),
+            nickname=user.get("nickname"),
             email=user.get("email", ""),
             roles=roles,
             status=status,

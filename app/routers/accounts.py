@@ -7,8 +7,10 @@ from app.logging.decorator import log
 from app.models.account import (
     AccountDetailOut,
     AccountListPage,
+    NicknameRequest,
     TransitionRequest,
     TransitionResponse,
+    WarningRequest,
 )
 from app.models.account_history import AccountHistoryPage
 from app.models.attendance import AttendanceHistoryOut
@@ -78,7 +80,7 @@ def execute_transition(
     ctx = auth_ctx.get()
     try:
         result, event = AccountService().execute_transition(
-            ctx.project_id, uid, body.action, ctx.user_id
+            ctx.project_id, uid, body.action, ctx.user_id, reason=body.reason
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -87,6 +89,49 @@ def execute_transition(
             event, project_id=ctx.project_id, source="account_service"
         )
     return result
+
+
+@log
+@router.post("/{uid}/warning")
+@require_roles("owner", "assistant", "teacher", "instructor")
+def warn_account(uid: str, body: WarningRequest):
+    """Registra uma advertência (histórico, sem mudar status) + 2 pushes."""
+    ctx = auth_ctx.get()
+    try:
+        event = AccountService().warn_account(
+            project_id=ctx.project_id,
+            uid=uid,
+            actor_uid=ctx.user_id,
+            reason=body.reason,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    publisher.publish(
+        event, project_id=ctx.project_id, source="account_service"
+    )
+    return {"status": "ok"}
+
+
+@log
+@router.patch("/{uid}/nickname")
+@require_roles("assistant", "teacher", "instructor")
+def assign_nickname(uid: str, body: NicknameRequest):
+    """Atribui (ou remove, com string vazia) o apelido de um usuário."""
+    ctx = auth_ctx.get()
+    try:
+        event = AccountService().assign_nickname(
+            project_id=ctx.project_id,
+            target_uid=uid,
+            actor_uid=ctx.user_id,
+            nickname=body.nickname,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if event:
+        publisher.publish(
+            event, project_id=ctx.project_id, source="account_service"
+        )
+    return {"status": "ok", "nickname": body.nickname or None}
 
 
 # ─── Endpoints admin RFC-12 (sem X-Acting-As) ─────────────────────────────────

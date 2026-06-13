@@ -16,6 +16,7 @@ from app.routers import (
     classes,
     donations,
     events,
+    graduations,
     internal,
     jobs,
     medical_history,
@@ -76,6 +77,7 @@ app.include_router(classes.router)
 app.include_router(donations.router)
 app.include_router(events.router)
 app.include_router(modalities.router)
+app.include_router(graduations.router)
 app.include_router(auth.router)
 app.include_router(medical_history.router)
 app.include_router(profile.router)

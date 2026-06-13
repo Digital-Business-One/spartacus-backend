@@ -63,6 +63,7 @@ class StudentAttendanceCard(BaseModel):
 
     user_id: str
     name: str
+    nickname: Optional[str] = None
     initials: str
     age: Optional[int] = None
     age_category: Optional[str] = None       # "Kids", "Juvenil", "Adulto"...

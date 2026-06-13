@@ -89,6 +89,7 @@ class DonationStudentCard(BaseModel):
 
     user_id: str
     name: str
+    nickname: Optional[str] = None
     initials: str
     age: Optional[int] = None
     photo_url: Optional[str] = None

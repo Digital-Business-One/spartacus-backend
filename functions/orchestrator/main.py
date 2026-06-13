@@ -105,6 +105,82 @@ EVENT_RULES: dict[str, dict] = {
 
     # ══ PRESENÇA ══════════════════════════════════════════════════════════════
 
+    "account.warned": {
+        "channels": ["push"],
+        "push": [
+            {
+                # Aluno (e responsáveis, se menor)
+                "target": "owner_and_guardian",
+                "title_template": "Você recebeu uma advertência",
+                "body_template": "Motivo: {reason}",
+            },
+            {
+                # Demais staff, exceto quem registrou
+                "target": "staff_except_author",
+                "title_template": "Advertência registrada",
+                "body_template": (
+                    "{author_name} advertiu {target_name}. Motivo: {reason}"
+                ),
+            },
+        ],
+    },
+    "account.suspended": {
+        "channels": ["push"],
+        "push": [
+            {
+                "target": "owner_and_guardian",
+                "title_template": "Sua conta foi suspensa",
+                "body_template": "Motivo: {reason}",
+            },
+            {
+                "target": "staff_except_author",
+                "title_template": "Suspensão registrada",
+                "body_template": (
+                    "{author_name} suspendeu {target_name}. Motivo: {reason}"
+                ),
+            },
+        ],
+    },
+    "graduation.approved": {
+        "channels": ["push"],
+        "push": {
+            "target": "owner_and_guardian",
+            "title_template": "{title}",
+            "body_template": "{body}",
+        },
+    },
+    "graduation.promoted": {
+        "channels": ["push"],
+        "push": {
+            "target": "owner_and_guardian",
+            "title_template": "{title}",
+            "body_template": "{body}",
+        },
+    },
+    "graduation.rejected": {
+        "channels": ["push"],
+        "push": {
+            "target": "owner_and_guardian",
+            "title_template": "{title}",
+            "body_template": "{body}",
+        },
+    },
+    "account.nickname_assigned": {
+        "channels": ["timeline", "push"],
+        "timeline": {
+            # type "post" — renders title/description in the app feed;
+            # personal_and_staff keeps it on the user's own timeline only
+            "action": "create",
+            "type": "post",
+            "visibility": "personal_and_staff",
+            "id_prefix": "apelido",
+        },
+        "push": {
+            "target": "owner_and_guardian",
+            "title_template": "{title}",
+            "body_template": "{description}",
+        },
+    },
     "checkin.registered": {
         "channels": ["timeline", "push"],
         "timeline": {
@@ -154,6 +230,16 @@ EVENT_RULES: dict[str, dict] = {
             "target": "owner_and_guardian",
             "title_template": "Presença não confirmada",
             "body_template": "Registro de presença em {turma_name} não foi confirmado",
+        },
+    },
+    "checkin.validation_undone": {
+        "channels": ["timeline"],
+        "timeline": {
+            "action": "update_or_create",
+            "type": "attendance",
+            "visibility": "personal_and_staff",
+            "id_prefix": "presenca",
+            "update_fields": {"validationStatus": "pending"},
         },
     },
     "checkin.review_requested": {
@@ -219,6 +305,16 @@ EVENT_RULES: dict[str, dict] = {
             "target": "owner_and_guardian",
             "title_template": "Doação não confirmada",
             "body_template": "Seu registro de doação não foi confirmado",
+        },
+    },
+    "donation.validation_undone": {
+        "channels": ["timeline"],
+        "timeline": {
+            "action": "update_or_create",
+            "type": "donation",
+            "visibility": "personal_and_staff",
+            "id_prefix": "doacao",
+            "update_fields": {"validationStatus": "pending"},
         },
     },
     "donation.review_requested": {
@@ -637,28 +733,42 @@ def _handle_calendar(rule, event_data, payload, doc_path, db):
         print(f"OK: event={event_data.get('eventId')} channel=calendar action=delete id={cal_doc_id}")
 
 
-def _handle_push(rule, event_data, payload, doc_path, db):
-    push = rule["push"]
+def _resolve_push_recipients(push, payload, project_id, db):
+    """Resolve the recipient UIDs for a single push spec by its target."""
     target = push.get("target", "")
-    project_id = event_data.get("projectId", "")
-
-    recipients = []
+    author_uid = payload.get("author_uid", "")
     if target == "owner_and_guardian":
         target_uid = payload.get("target_uid") or payload.get("uid", "")
+        recipients = []
         if target_uid:
             recipients.append(target_uid)
             recipients.extend(_resolve_guardians(db, target_uid, project_id))
-    elif target in ("staff", "staff_actionable"):
-        recipients = _resolve_staff_uids(db, project_id)
-    elif target == "all_members":
+        return recipients
+    if target in ("staff", "staff_actionable"):
+        return _resolve_staff_uids(db, project_id)
+    if target == "staff_except_author":
+        return [
+            uid for uid in _resolve_staff_uids(db, project_id)
+            if uid != author_uid
+        ]
+    if target == "all_members":
         recipients = _resolve_all_member_uids(db, project_id)
         if push.get("exclude_author"):
-            author_uid = payload.get("author_uid", "")
             recipients = [uid for uid in recipients if uid != author_uid]
+        return recipients
+    return []
+
+
+def _enqueue_push(push, event_data, payload, doc_path, db):
+    """Resolve recipients for one push spec and enqueue a doc per user."""
+    project_id = event_data.get("projectId", "")
+    target = push.get("target", "")
+    recipients = _resolve_push_recipients(push, payload, project_id, db)
 
     title = _safe_format(push.get("title_template", ""), payload)
     body = _safe_format(push.get("body_template", ""), payload)
 
+    count = 0
     for uid in recipients:
         if not uid:
             continue
@@ -677,8 +787,21 @@ def _handle_push(rule, event_data, payload, doc_path, db):
         if target == "staff_actionable":
             push_doc["actions"] = push.get("actions", [])
         db.collection("push_queue").add(push_doc)
+        count += 1
+    print(
+        f"OK: event={event_data.get('eventId')} channel=push "
+        f"target={target} recipients={count}"
+    )
 
-    print(f"OK: event={event_data.get('eventId')} channel=push target={target} recipients={len(recipients)}")
+
+def _handle_push(rule, event_data, payload, doc_path, db):
+    # `push` may be a single spec (dict) or several (list) — e.g. moderation
+    # events notify the student AND all staff with distinct messages.
+    specs = rule["push"]
+    if isinstance(specs, dict):
+        specs = [specs]
+    for push in specs:
+        _enqueue_push(push, event_data, payload, doc_path, db)
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────

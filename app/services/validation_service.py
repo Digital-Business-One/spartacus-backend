@@ -83,11 +83,20 @@ class ValidationService:
             raise PermissionError("Acesso negado ao registro")
 
         now = datetime.now(timezone.utc).isoformat()
-        doc_ref.update({
+        update_payload = {
             "status": status,
             "validatedBy": actor_uid,
             "validatedAt": now,
-        })
+        }
+        # When confirming/approving, remember the column the card came from
+        # so undo can return it there (middle when self-registered).
+        if status in ("confirmed", "received"):
+            cur = data.get("status")
+            update_payload["previousStatus"] = (
+                cur if cur not in ("confirmed", "received")
+                else data.get("previousStatus")
+            )
+        doc_ref.update(update_payload)
 
         # Record in account history (target user)
         target_uid = data.get("userId", "")
@@ -121,6 +130,94 @@ class ValidationService:
             payload=ValidationPayload(
                 entity_id=doc_id,
                 target_uid=data.get("userId", ""),
+                target_name=data.get("userName", ""),
+                validated_by=actor_uid,
+                validated_at=now,
+                turma_name=data.get("turmaName", ""),
+                donation_amount=(
+                    self._donation_label(data)
+                    if collection == "donations" else ""
+                ),
+            ),
+        )
+
+    @log
+    def undo_validation(
+        self,
+        collection: str,
+        doc_id: str,
+        project_id: str,
+        actor_uid: str,
+    ) -> DomainEvent:
+        """Revert a confirmation made by mistake.
+
+        The card returns to the **column it came from** — middle column when
+        the user self-registered (check-in / pledged donation), or column 1
+        when staff registered it straight from there. The origin is read from
+        the `previousStatus` recorded at confirmation time; legacy records
+        without it fall back to the middle column. No push is sent.
+        """
+        if collection == "attendance":
+            expected, default_prev = "confirmed", "registered"
+        elif collection == "donations":
+            expected, default_prev = "received", "pledged"
+        else:
+            raise ValueError(f"Coleção inválida: {collection}")
+
+        db = firestore.client()
+        doc_ref = db.collection(collection).document(doc_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            raise LookupError(f"Registro não encontrado: {collection}/{doc_id}")
+
+        data = doc.to_dict()
+        if data.get("projectId") != project_id:
+            raise PermissionError("Acesso negado ao registro")
+        if data.get("status") != expected:
+            raise ValueError(
+                f"Registro não está {expected} — não há o que desfazer",
+            )
+
+        reverted = data.get("previousStatus") or default_prev
+
+        now = datetime.now(timezone.utc).isoformat()
+        update = {
+            "status": reverted,
+            "previousStatus": None,
+            "validatedBy": None,
+            "validatedAt": None,
+        }
+        if collection == "donations":
+            update.update({"receivedBy": None, "receivedAt": None})
+        doc_ref.update(update)
+
+        target_uid = data.get("userId", "")
+        if target_uid:
+            actor_doc = db.collection("users").document(actor_uid).get()
+            actor_name = (
+                actor_doc.to_dict().get("name", "") if actor_doc.exists else ""
+            )
+            event_type = (
+                "attendance" if collection == "attendance" else "donation"
+            )
+            AccountHistoryService().record(
+                uid=target_uid,
+                project_id=project_id,
+                event_type=event_type,
+                event_subtype="validation_undone",
+                actor_uid=actor_uid,
+                actor_name=actor_name,
+                actor_roles=[],
+                description="Confirmação desfeita"
+                + (f" por {actor_name}" if actor_name else ""),
+            )
+
+        prefix = "checkin" if collection == "attendance" else "donation"
+        return DomainEvent(
+            id=f"{prefix}.validation_undone",
+            payload=ValidationPayload(
+                entity_id=doc_id,
+                target_uid=target_uid,
                 target_name=data.get("userName", ""),
                 validated_by=actor_uid,
                 validated_at=now,
