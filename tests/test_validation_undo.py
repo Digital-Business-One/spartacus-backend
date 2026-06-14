@@ -62,12 +62,13 @@ class TestUndoValidation:
             "userId": "aluno-1",
             "userName": "Aluno Um",
             "item": "cookies",
+            "itemLabel": "1 pacote de bolacha",
         })
         with patch("app.services.validation_service.firestore") as fs, \
              patch("app.services.validation_service.AccountHistoryService"):
             fs.client.return_value = db
             event = ValidationService().undo_validation(
-                collection="donations",
+                collection="support",
                 doc_id="don-1",
                 project_id="spartacus",
                 actor_uid="staff-1",
@@ -77,7 +78,7 @@ class TestUndoValidation:
         assert updated["status"] == "pledged"
         assert updated["receivedBy"] is None
         assert updated["receivedAt"] is None
-        assert event.id == "donation.validation_undone"
+        assert event.id == "support.validation_undone"
         assert (
             event.payload.personalization()["donation_amount"]
             == "1 pacote de bolacha"

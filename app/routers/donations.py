@@ -1,116 +1,77 @@
+"""Back-compat shim for the legacy /donations endpoints.
+
+The donations feature was generalized into "Apoio" (support). These thin
+routes keep the previously-shipped mobile app working until it is rebuilt to
+use /support/*. New code should use the support router.
+"""
+
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
 
 from app.events import publisher
 from app.logging.decorator import log
-from app.models.donation import (
-    DonationConfig,
-    DonationConfigUpdate,
-    DonationCreate,
-    DonationDashboardOut,
-    DonationHistoryOut,
-    DonationOut,
-    DonationRegisterReceived,
-)
+from app.models.support import SupportCreate, SupportOut
 from app.security.context import auth_ctx
-from app.security.decorator import require_roles
-from app.services.donation_service import DonationService
+from app.services.support_service import SupportService
 
-router = APIRouter(tags=["donations"])
+router = APIRouter(tags=["donations(compat)"])
 
 
 @log
 @router.post("/donations", status_code=201)
-def create_donation(
-    data: DonationCreate,
+def create_donation_compat(
+    data: SupportCreate,
     x_acting_as: Optional[str] = Header(None),
-) -> DonationOut:
+) -> SupportOut:
+    """Legacy app registers a donation → delegates to support (donation)."""
     ctx = auth_ctx.get()
-    result, event = DonationService().create(
+    data.support_type = "donation"
+    result, event = SupportService().create(
         project_id=ctx.project_id,
         uid=ctx.user_id,
         acting_as=x_acting_as,
         data=data,
     )
-    publisher.publish(
-        event, project_id=ctx.project_id, source="donation_service",
-    )
-    return result
-
-
-@log
-@router.get("/donations/dashboard")
-@require_roles("owner", "assistant", "teacher", "instructor")
-def get_donations_dashboard() -> DonationDashboardOut:
-    ctx = auth_ctx.get()
-    return DonationService().dashboard(ctx.project_id)
-
-
-@log
-@router.post("/donations/register-received", status_code=201)
-@require_roles("owner", "assistant", "teacher", "instructor")
-def register_received_donation(data: DonationRegisterReceived) -> DonationOut:
-    """Staff registers an already-received donation for a student."""
-    ctx = auth_ctx.get()
-    result, event = DonationService().register_received(
-        project_id=ctx.project_id,
-        actor_uid=ctx.user_id,
-        data=data,
-    )
-    publisher.publish(
-        event, project_id=ctx.project_id, source="donation_service",
-    )
+    publisher.publish(event, project_id=ctx.project_id, source="support_service")
     return result
 
 
 @log
 @router.get("/donations/current")
-def get_current_donation(
+def get_current_donation_compat(
     x_acting_as: Optional[str] = Header(None),
-) -> DonationOut:
-    ctx = auth_ctx.get()
-    result = DonationService().get_current(
-        project_id=ctx.project_id,
-        uid=ctx.user_id,
-        acting_as=x_acting_as,
-    )
-    if result is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Nenhuma doação registrada este mês",
-        )
-    return result
+) -> SupportOut:
+    """No monthly lock anymore — always 'none', so the app shows the wizard."""
+    raise HTTPException(status_code=404, detail="Nenhuma doação registrada")
 
 
 @log
 @router.get("/donations/history")
-def get_donation_history(
+def get_donation_history_compat(
     x_acting_as: Optional[str] = Header(None),
-) -> DonationHistoryOut:
+) -> dict:
+    """Map support history to the legacy {donations:[...]} shape."""
     ctx = auth_ctx.get()
-    return DonationService().get_history(
-        project_id=ctx.project_id,
-        uid=ctx.user_id,
-        acting_as=x_acting_as,
+    hist = SupportService().get_history(
+        project_id=ctx.project_id, uid=ctx.user_id, acting_as=x_acting_as,
     )
-
-
-@log
-@router.get("/projects/{project_id}/donation-config")
-def get_donation_config(project_id: str) -> DonationConfig:
-    return DonationService().get_config(project_id)
-
-
-@log
-@router.patch("/projects/{project_id}/donation-config")
-@require_roles("owner", "assistant")
-def update_donation_config(
-    project_id: str, data: DonationConfigUpdate,
-) -> DonationConfig:
-    ctx = auth_ctx.get()
-    if ctx.project_id != project_id:
-        raise HTTPException(
-            status_code=403, detail="Projeto não autorizado",
-        )
-    return DonationService().update_config(project_id, data)
+    return {
+        "donations": [
+            {
+                "id": i.id,
+                "month": i.month,
+                "monthLabel": i.month_label,
+                "item": i.item,
+                "itemLabel": i.item_label,
+                "itemDescription": i.item_description,
+                "status": i.status,
+                "statusLabel": i.status_label,
+                "createdAt": i.created_at,
+                "receivedBy": i.received_by,
+                "receivedByName": i.received_by_name,
+                "receivedAt": i.received_at,
+            }
+            for i in hist.items
+        ],
+    }

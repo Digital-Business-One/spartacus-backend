@@ -41,6 +41,7 @@ class TimelineEntryOut(BaseModel):
 
     likes_count: int = 0
     user_liked: bool = False  # resolved per-request
+    is_pinned: bool = False  # resolved per-request (project-level pin)
 
     turma_name: Optional[str] = None
     modalidade_name: Optional[str] = None
@@ -64,6 +65,12 @@ class TimelineFeedResponse(BaseModel):
 
 class ValidateRequest(BaseModel):
     status: str  # "confirmed" | "absent"
+
+
+class PinResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    pinned: bool
 
 
 class LinkPreviewResponse(BaseModel):

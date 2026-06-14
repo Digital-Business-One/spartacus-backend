@@ -41,6 +41,10 @@ class PostService:
             "eventDate": data.event_date,
             "eventEndDate": data.event_end_date,
             "eventLocation": data.event_location,
+            "eventCategory": data.event_category,
+            "modalityId": data.modality_id,
+            "organizer": data.organizer,
+            "registrationLink": data.registration_link,
             "status": "active",
             "createdAt": now,
             "updatedAt": None,
@@ -67,6 +71,10 @@ class PostService:
                 event_date=data.event_date,
                 event_end_date=data.event_end_date,
                 event_location=data.event_location,
+                event_category=data.event_category,
+                modality_id=data.modality_id,
+                organizer=data.organizer,
+                registration_link=data.registration_link,
             ),
         )
 
@@ -83,6 +91,10 @@ class PostService:
             event_date=data.event_date,
             event_end_date=data.event_end_date,
             event_location=data.event_location,
+            event_category=data.event_category,
+            modality_id=data.modality_id,
+            organizer=data.organizer,
+            registration_link=data.registration_link,
             status="active",
             created_at=now,
         )

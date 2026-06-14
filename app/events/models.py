@@ -114,6 +114,10 @@ class PostCreatedPayload:
     event_date: str | None = None
     event_end_date: str | None = None
     event_location: str | None = None
+    event_category: str | None = None  # own | external | guest_class
+    modality_id: str | None = None
+    organizer: str | None = None
+    registration_link: str | None = None
 
     def personalization(self) -> dict:
         return {
@@ -132,6 +136,10 @@ class PostCreatedPayload:
             "event_date": self.event_date,
             "event_end_date": self.event_end_date,
             "event_location": self.event_location,
+            "event_category": self.event_category,
+            "modality_id": self.modality_id,
+            "organizer": self.organizer,
+            "registration_link": self.registration_link,
         }
 
 
@@ -306,8 +314,8 @@ class ReviewRequestedPayload:
 
 
 @dataclass
-class DonationRegisteredPayload:
-    """Payload for donation.registered event."""
+class SupportRegisteredPayload:
+    """Payload for support.registered (donation or service)."""
 
     entity_id: str
     source_entity_ref: str
@@ -316,8 +324,9 @@ class DonationRegisteredPayload:
     target_name: str
     author_uid: str
     author_name: str
-    donation_amount: str
-    donation_date: str
+    support_type: str          # donation | service
+    support_label: str         # "{item_label}: {desc}" or "{item_label}"
+    support_date: str          # month "YYYY-MM"
 
     def personalization(self) -> dict:
         return {
@@ -328,6 +337,12 @@ class DonationRegisteredPayload:
             "target_name": self.target_name,
             "author_uid": self.author_uid,
             "author_name": self.author_name,
-            "donation_amount": self.donation_amount,
-            "donation_date": self.donation_date,
+            "support_type": self.support_type,
+            "support_type_label": (
+                "Serviço" if self.support_type == "service" else "Doação"
+            ),
+            "support_label": self.support_label,
+            # kept for template back-compat with donation messages
+            "donation_amount": self.support_label,
+            "support_date": self.support_date,
         }

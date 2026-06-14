@@ -18,6 +18,11 @@ class EventOut(BaseModel):
     end_date: Optional[str] = None
     location: Optional[str] = None
     description: Optional[str] = None
+    # backoffice calendar extras
+    event_category: Optional[str] = None  # own | external | guest_class
+    modality_id: Optional[str] = None
+    organizer: Optional[str] = None
+    registration_link: Optional[str] = None
 
 
 class EventsResponse(BaseModel):

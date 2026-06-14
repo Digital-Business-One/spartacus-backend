@@ -258,76 +258,76 @@ EVENT_RULES: dict[str, dict] = {
 
     # ══ DOAÇÕES ═══════════════════════════════════════════════════════════════
 
-    "donation.registered": {
+    "support.registered": {
         "channels": ["timeline", "push"],
         "timeline": {
             "action": "create",
             "type": "donation",
             "visibility": "personal_and_staff",
-            "id_prefix": "doacao",
+            "id_prefix": "apoio",
             "initial_status": "pending",
         },
         "push": {
             "target": "staff_actionable",
-            "title_template": "{author_name} registrou doação",
+            "title_template": "{author_name} registrou {support_type_label}",
             "body_template": "{donation_amount}",
             "actions": [
                 {"title": "Confirmar", "action": "CONFIRM"},
-                {"title": "Ausência", "action": "REJECT"},
+                {"title": "Recusar", "action": "REJECT"},
             ],
         },
     },
-    "donation.received": {
+    "support.received": {
         "channels": ["timeline", "push"],
         "timeline": {
             # update_or_create: staff can register an already-received
-            # donation with no prior donation.registered timeline entry
+            # support with no prior support.registered timeline entry
             "action": "update_or_create",
             "type": "donation",
             "visibility": "personal_and_staff",
-            "id_prefix": "doacao",
+            "id_prefix": "apoio",
             "update_fields": {"validationStatus": "confirmed"},
         },
         "push": {
             "target": "owner_and_guardian",
-            "title_template": "Doação validada",
-            "body_template": "Sua doação de {donation_amount} foi confirmada",
+            "title_template": "Apoio validado",
+            "body_template": "Seu apoio ({donation_amount}) foi confirmado",
         },
     },
-    "donation.absent": {
+    "support.absent": {
         "channels": ["timeline", "push"],
         "timeline": {
             "action": "update",
-            "id_prefix": "doacao",
+            "id_prefix": "apoio",
             "update_fields": {"validationStatus": "absent"},
         },
         "push": {
             "target": "owner_and_guardian",
-            "title_template": "Doação não confirmada",
-            "body_template": "Seu registro de doação não foi confirmado",
+            "title_template": "Apoio não confirmado",
+            "body_template": "Seu registro de apoio não foi confirmado",
         },
     },
-    "donation.validation_undone": {
+    "support.validation_undone": {
         "channels": ["timeline"],
         "timeline": {
             "action": "update_or_create",
             "type": "donation",
             "visibility": "personal_and_staff",
-            "id_prefix": "doacao",
+            "id_prefix": "apoio",
             "update_fields": {"validationStatus": "pending"},
         },
     },
-    "donation.review_requested": {
+    "support.review_requested": {
         "channels": ["timeline", "push"],
         "timeline": {
             "action": "update",
-            "id_prefix": "doacao",
+            "id_prefix": "apoio",
             "update_fields": {"reviewRequested": True},
         },
         "push": {
             "target": "owner_and_guardian",
-            "title_template": "Revisão de doação solicitada",
-            "body_template": "Solicitação de revisão de doação registrada",
+            "title_template": "Revisão de apoio solicitada",
+            "body_template": "Solicitação de revisão de apoio registrada",
         },
     },
 
@@ -709,6 +709,10 @@ def _handle_calendar(rule, event_data, payload, doc_path, db):
             "startDate": payload.get("event_date"),
             "endDate": payload.get("event_end_date"),
             "location": payload.get("event_location"),
+            "eventCategory": payload.get("event_category"),
+            "modalityId": payload.get("modality_id"),
+            "organizer": payload.get("organizer"),
+            "registrationLink": payload.get("registration_link"),
             "origin": payload.get("origin", "timeline_wizard"),
             "sourcePostRef": f"posts/{entity_id}",
             "sourceEventRef": doc_path,

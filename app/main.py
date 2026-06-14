@@ -25,6 +25,7 @@ from app.routers import (
     posts,
     profile,
     projects,
+    support,
     timeline,
     validation,
 )
@@ -75,6 +76,7 @@ app.include_router(attendance.router)
 app.include_router(checkin.router)
 app.include_router(classes.router)
 app.include_router(donations.router)
+app.include_router(support.router)
 app.include_router(events.router)
 app.include_router(modalities.router)
 app.include_router(graduations.router)

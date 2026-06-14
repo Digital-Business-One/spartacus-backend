@@ -23,6 +23,13 @@ class TimelineService:
     ) -> tuple[list[TimelineEntryOut], str | None]:
         db = firestore.client()
 
+        # Pinned entry is resolved (and prepended) only on the first page.
+        pinned_id: str | None = None
+        if not cursor:
+            proj = db.collection("projects").document(project_id).get()
+            if proj.exists:
+                pinned_id = proj.to_dict().get("pinnedTimelineEntryId") or None
+
         # Over-fetch to compensate for in-memory visibility filtering
         fetch_limit = limit * 4
         query = (
@@ -50,6 +57,11 @@ class TimelineService:
             entry = doc.to_dict()
             entry["id"] = doc.id
 
+            # The pinned entry is prepended separately — skip it here so it
+            # never appears twice (top + natural chronological position).
+            if entry["id"] == pinned_id:
+                continue
+
             if not self._is_visible(entry, user.user_id, my_dependents, is_staff):
                 continue
 
@@ -74,19 +86,51 @@ class TimelineService:
             if len(collected) >= limit:
                 break
 
+        # Resolve the pinned entry and prepend it on the first page, applying
+        # the same visibility / acting-as rules as the main feed.
+        pinned_entry: dict | None = None
+        if pinned_id:
+            pdoc = db.collection(self._COLLECTION).document(pinned_id).get()
+            if pdoc.exists:
+                pe = pdoc.to_dict()
+                pe["id"] = pdoc.id
+                acting_ok = True
+                if acting_as:
+                    target = pe.get("targetUid")
+                    acting_ok = not target or target == acting_as
+                if (
+                    pe.get("projectId") == project_id
+                    and acting_ok
+                    and self._is_visible(
+                        pe, user.user_id, my_dependents, is_staff
+                    )
+                ):
+                    reaction_ref = (
+                        db.collection(self._COLLECTION)
+                        .document(pe["id"])
+                        .collection("reactions")
+                        .document(user.user_id)
+                    )
+                    pe["userLiked"] = reaction_ref.get().exists
+                    pe["isPinned"] = True
+                    pinned_entry = pe
+
+        ordered = ([pinned_entry] if pinned_entry else []) + collected
+
         # Batch-fetch photos for all authors + targets in a single request.
         # Timeline entries only denormalize name/roles, not photo — resolving
         # live keeps the feed fresh when a user updates their avatar.
         photo_uids: set[str] = set()
-        for e in collected:
+        for e in ordered:
             if e.get("authorUid"):
                 photo_uids.add(e["authorUid"])
             if e.get("targetUid"):
                 photo_uids.add(e["targetUid"])
         photos = self._fetch_user_photos(db, photo_uids)
 
-        visible = [self._to_out(e, photos) for e in collected]
-        next_cursor = last_created_at if len(visible) >= limit else None
+        visible = [self._to_out(e, photos) for e in ordered]
+        # Pagination is driven by the non-pinned page contents only.
+        next_cursor = last_created_at if len(collected) >= limit else None
         return visible, next_cursor
 
     def _fetch_user_photos(
@@ -137,6 +181,30 @@ class TimelineService:
 
         reaction_ref.delete()
         entry_ref.update({"likesCount": firestore.Increment(-1)})
+
+    @log
+    def toggle_pin(self, project_id: str, entry_id: str) -> bool:
+        """Pin/unpin a timeline entry for the project.
+
+        Only one entry can be pinned per project — pinning a new entry
+        replaces the previous one. Pinning the already-pinned entry unpins it.
+        Returns the resulting pinned state.
+        """
+        db = firestore.client()
+        entry_ref = db.collection(self._COLLECTION).document(entry_id)
+        doc = entry_ref.get()
+        if not doc.exists or doc.to_dict().get("projectId") != project_id:
+            raise LookupError("Timeline entry não encontrada")
+
+        proj_ref = db.collection("projects").document(project_id)
+        proj = proj_ref.get()
+        current = (
+            proj.to_dict().get("pinnedTimelineEntryId") if proj.exists else None
+        )
+
+        new_value = None if current == entry_id else entry_id
+        proj_ref.set({"pinnedTimelineEntryId": new_value}, merge=True)
+        return new_value is not None
 
     @log
     def list_reactions(
@@ -261,6 +329,7 @@ class TimelineService:
             review_resolved=entry.get("reviewResolved", False),
             likes_count=entry.get("likesCount", 0),
             user_liked=entry.get("userLiked", False),
+            is_pinned=entry.get("isPinned", False),
             turma_name=entry.get("turmaName"),
             modalidade_name=entry.get("modalidadeName"),
             class_date=entry.get("classDate"),

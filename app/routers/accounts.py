@@ -14,17 +14,17 @@ from app.models.account import (
 )
 from app.models.account_history import AccountHistoryPage
 from app.models.attendance import AttendanceHistoryOut
-from app.models.donation import DonationHistoryOut
 from app.models.medical_history import MedicalHistoryOut
 from app.models.profile import DependentOut
+from app.models.support import SupportHistoryOut
 from app.security.context import auth_ctx
 from app.security.decorator import require_roles
 from app.services.account_history_service import AccountHistoryService
 from app.services.account_service import AccountService
 from app.services.attendance_service import AttendanceService
-from app.services.donation_service import DonationService
 from app.services.medical_history_service import MedicalHistoryService
 from app.services.profile_service import ProfileService
+from app.services.support_service import SupportService
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -177,14 +177,14 @@ def get_account_attendance_history(
 
 
 @log
-@router.get("/{uid}/donations/history")
+@router.get("/{uid}/support/history")
 @require_roles("owner", "assistant")
-def get_account_donations_history(
+def get_account_support_history(
     uid: str,
     year: Optional[int] = Query(None),
-) -> DonationHistoryOut:
+) -> SupportHistoryOut:
     ctx = auth_ctx.get()
-    return DonationService().get_history_admin(
+    return SupportService().get_history_admin(
         project_id=ctx.project_id, target_uid=uid, year=year,
     )
 

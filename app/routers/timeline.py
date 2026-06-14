@@ -9,6 +9,7 @@ from app.models.timeline import (
     LikesResponse,
     LikeUser,
     LinkPreviewResponse,
+    PinResponse,
     TimelineFeedResponse,
 )
 from app.security.context import auth_ctx
@@ -65,6 +66,19 @@ def list_reactions(entry_id: str) -> LikesResponse:
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return LikesResponse(users=[LikeUser(**u) for u in users])
+
+
+@log
+@router.patch("/{entry_id}/pin")
+@require_roles("social")
+def pin_entry(entry_id: str) -> PinResponse:
+    """Toggle the project's single pinned timeline entry (social staff only)."""
+    ctx = auth_ctx.get()
+    try:
+        pinned = TimelineService().toggle_pin(ctx.project_id, entry_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return PinResponse(pinned=pinned)
 
 
 @log

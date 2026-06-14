@@ -7,8 +7,9 @@ from firebase_admin import firestore
 from app.domain.enums import ValidationStatus
 from app.events.models import DomainEvent, ReviewRequestedPayload, ValidationPayload
 from app.logging.decorator import log
-from app.models.donation import ITEM_LABELS
 from app.services.account_history_service import AccountHistoryService
+
+_SUPPORT_COLLECTIONS = ("support", "donations")
 
 
 class ValidationService:
@@ -24,10 +25,9 @@ class ValidationService:
     )
 
     @staticmethod
-    def _donation_label(data: dict) -> str:
-        """Human label for a donation doc — mirrors DonationService.create."""
-        item = data.get("item", "")
-        item_label = ITEM_LABELS.get(item, item)
+    def _support_label(data: dict) -> str:
+        """Human label for a support doc (uses stored itemLabel)."""
+        item_label = data.get("itemLabel") or data.get("item", "")
         desc = data.get("itemDescription") or ""
         return f"{item_label}: {desc}" if desc else item_label
 
@@ -43,10 +43,10 @@ class ValidationService:
                 "absent_justified": f"Falta justificada em {turma}",
             }
         else:
-            item = data.get("item", "doação")
+            label = data.get("itemLabel") or data.get("item", "apoio")
             labels = {
-                "received": f"Doação validada ({item})",
-                "absent": f"Doação não recebida ({item})",
+                "received": f"Apoio validado ({label})",
+                "absent": f"Apoio recusado ({label})",
             }
         base = labels.get(status, f"{collection}: {status}")
         return f"{base} por {actor_name}" if actor_name else base
@@ -63,7 +63,7 @@ class ValidationService:
         """Confirm or mark absent on an attendance/donation record."""
         if collection == "attendance":
             valid = self._ATTENDANCE_VALID_STATUSES
-        elif collection == "donations":
+        elif collection in _SUPPORT_COLLECTIONS:
             valid = self._DONATION_VALID_STATUSES
         else:
             raise ValueError(f"Coleção inválida: {collection}")
@@ -106,7 +106,7 @@ class ValidationService:
             if actor_doc.exists:
                 actor_name = actor_doc.to_dict().get("name", "")
             history_event_type = (
-                "attendance" if collection == "attendance" else "donation"
+                "attendance" if collection == "attendance" else "support"
             )
             AccountHistoryService().record(
                 uid=target_uid,
@@ -122,7 +122,7 @@ class ValidationService:
             )
 
         # Map collection → event prefix
-        prefix = "checkin" if collection == "attendance" else "donation"
+        prefix = "checkin" if collection == "attendance" else "support"
         event_id = f"{prefix}.{status}"
 
         return DomainEvent(
@@ -135,8 +135,8 @@ class ValidationService:
                 validated_at=now,
                 turma_name=data.get("turmaName", ""),
                 donation_amount=(
-                    self._donation_label(data)
-                    if collection == "donations" else ""
+                    self._support_label(data)
+                    if collection in _SUPPORT_COLLECTIONS else ""
                 ),
             ),
         )
@@ -159,7 +159,7 @@ class ValidationService:
         """
         if collection == "attendance":
             expected, default_prev = "confirmed", "registered"
-        elif collection == "donations":
+        elif collection in _SUPPORT_COLLECTIONS:
             expected, default_prev = "received", "pledged"
         else:
             raise ValueError(f"Coleção inválida: {collection}")
@@ -187,7 +187,7 @@ class ValidationService:
             "validatedBy": None,
             "validatedAt": None,
         }
-        if collection == "donations":
+        if collection in _SUPPORT_COLLECTIONS:
             update.update({"receivedBy": None, "receivedAt": None})
         doc_ref.update(update)
 
@@ -198,7 +198,7 @@ class ValidationService:
                 actor_doc.to_dict().get("name", "") if actor_doc.exists else ""
             )
             event_type = (
-                "attendance" if collection == "attendance" else "donation"
+                "attendance" if collection == "attendance" else "support"
             )
             AccountHistoryService().record(
                 uid=target_uid,
@@ -212,7 +212,7 @@ class ValidationService:
                 + (f" por {actor_name}" if actor_name else ""),
             )
 
-        prefix = "checkin" if collection == "attendance" else "donation"
+        prefix = "checkin" if collection == "attendance" else "support"
         return DomainEvent(
             id=f"{prefix}.validation_undone",
             payload=ValidationPayload(
@@ -223,8 +223,8 @@ class ValidationService:
                 validated_at=now,
                 turma_name=data.get("turmaName", ""),
                 donation_amount=(
-                    self._donation_label(data)
-                    if collection == "donations" else ""
+                    self._support_label(data)
+                    if collection in _SUPPORT_COLLECTIONS else ""
                 ),
             ),
         )
@@ -267,7 +267,7 @@ class ValidationService:
             "reviewRequestedAt": now,
         })
 
-        prefix = "checkin" if collection == "attendance" else "donation"
+        prefix = "checkin" if collection == "attendance" else "support"
 
         return DomainEvent(
             id=f"{prefix}.review_requested",
@@ -278,8 +278,8 @@ class ValidationService:
                 review_requested_at=now,
                 turma_name=data.get("turmaName", ""),
                 donation_amount=(
-                    self._donation_label(data)
-                    if collection == "donations" else ""
+                    self._support_label(data)
+                    if collection in _SUPPORT_COLLECTIONS else ""
                 ),
             ),
         )
