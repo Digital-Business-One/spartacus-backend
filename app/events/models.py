@@ -114,6 +114,10 @@ class PostCreatedPayload:
     event_date: str | None = None
     event_end_date: str | None = None
     event_location: str | None = None
+    event_category: str | None = None  # own | external | guest_class
+    modality_id: str | None = None
+    organizer: str | None = None
+    registration_link: str | None = None
 
     def personalization(self) -> dict:
         return {
@@ -132,6 +136,10 @@ class PostCreatedPayload:
             "event_date": self.event_date,
             "event_end_date": self.event_end_date,
             "event_location": self.event_location,
+            "event_category": self.event_category,
+            "modality_id": self.modality_id,
+            "organizer": self.organizer,
+            "registration_link": self.registration_link,
         }
 
 
@@ -178,19 +186,109 @@ class ValidationPayload:
     donation_amount: str = ""
 
     def personalization(self) -> dict:
-        d = {
+        # turma_name / donation_amount always present, even empty —
+        # push templates reference them and _safe_format would otherwise
+        # leak the raw "{placeholder}" to the user.
+        return {
             "entity_id": self.entity_id,
             "target_uid": self.target_uid,
             "target_name": self.target_name,
             # camelCase — orchestrator reads validatedBy/validatedAt
             "validatedBy": self.validated_by,
             "validatedAt": self.validated_at,
+            "turma_name": self.turma_name,
+            "donation_amount": self.donation_amount,
         }
-        if self.turma_name:
-            d["turma_name"] = self.turma_name
-        if self.donation_amount:
-            d["donation_amount"] = self.donation_amount
-        return d
+
+
+@dataclass
+class GraduationEventPayload:
+    """Payload for graduation.approved / graduation.promoted.
+
+    Push to the student (and guardians). title/body are composed by the
+    service so one rule serves approve + degree + belt promotions.
+    """
+
+    entity_id: str
+    target_uid: str
+    target_name: str
+    author_uid: str
+    author_name: str
+    title: str
+    body: str
+
+    def personalization(self) -> dict:
+        return {
+            "entity_id": self.entity_id,
+            "source_entity_ref": f"users/{self.target_uid}",
+            "source_entity_type": "users",
+            "target_uid": self.target_uid,
+            "target_name": self.target_name,
+            "author_uid": self.author_uid,
+            "author_name": self.author_name,
+            "title": self.title,
+            "body": self.body,
+        }
+
+
+@dataclass
+class AccountModerationPayload:
+    """Payload for account.warned / account.suspended.
+
+    Drives two pushes (student + staff except author) — see orchestrator
+    rules. Carries the variables the templates reference.
+    """
+
+    entity_id: str
+    target_uid: str
+    target_name: str
+    author_uid: str
+    author_name: str
+    reason: str
+
+    def personalization(self) -> dict:
+        return {
+            "entity_id": self.entity_id,
+            "source_entity_ref": f"users/{self.target_uid}",
+            "source_entity_type": "users",
+            "target_uid": self.target_uid,
+            "target_name": self.target_name,
+            "author_uid": self.author_uid,
+            "author_name": self.author_name,
+            "reason": self.reason,
+        }
+
+
+@dataclass
+class NicknameAssignedPayload:
+    """Payload for account.nickname_assigned event.
+
+    Timeline entry (personal) + push for the user who got the nickname.
+    Title/description carry the fun message composed by the service.
+    """
+
+    entity_id: str
+    target_uid: str
+    target_name: str
+    nickname: str
+    author_uid: str
+    author_name: str
+    title: str
+    description: str
+
+    def personalization(self) -> dict:
+        return {
+            "entity_id": self.entity_id,
+            "source_entity_ref": f"users/{self.target_uid}",
+            "source_entity_type": "users",
+            "target_uid": self.target_uid,
+            "target_name": self.target_name,
+            "nickname": self.nickname,
+            "author_uid": self.author_uid,
+            "author_name": self.author_name,
+            "title": self.title,
+            "description": self.description,
+        }
 
 
 @dataclass
@@ -205,22 +303,19 @@ class ReviewRequestedPayload:
     donation_amount: str = ""
 
     def personalization(self) -> dict:
-        d = {
+        return {
             "entity_id": self.entity_id,
             "target_uid": self.target_uid,
             "target_name": self.target_name,
             "review_requested_at": self.review_requested_at,
+            "turma_name": self.turma_name,
+            "donation_amount": self.donation_amount,
         }
-        if self.turma_name:
-            d["turma_name"] = self.turma_name
-        if self.donation_amount:
-            d["donation_amount"] = self.donation_amount
-        return d
 
 
 @dataclass
-class DonationRegisteredPayload:
-    """Payload for donation.registered event."""
+class SupportRegisteredPayload:
+    """Payload for support.registered (donation or service)."""
 
     entity_id: str
     source_entity_ref: str
@@ -229,8 +324,9 @@ class DonationRegisteredPayload:
     target_name: str
     author_uid: str
     author_name: str
-    donation_amount: str
-    donation_date: str
+    support_type: str          # donation | service
+    support_label: str         # "{item_label}: {desc}" or "{item_label}"
+    support_date: str          # month "YYYY-MM"
 
     def personalization(self) -> dict:
         return {
@@ -241,6 +337,12 @@ class DonationRegisteredPayload:
             "target_name": self.target_name,
             "author_uid": self.author_uid,
             "author_name": self.author_name,
-            "donation_amount": self.donation_amount,
-            "donation_date": self.donation_date,
+            "support_type": self.support_type,
+            "support_type_label": (
+                "Serviço" if self.support_type == "service" else "Doação"
+            ),
+            "support_label": self.support_label,
+            # kept for template back-compat with donation messages
+            "donation_amount": self.support_label,
+            "support_date": self.support_date,
         }

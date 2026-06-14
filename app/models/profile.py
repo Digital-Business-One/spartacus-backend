@@ -31,6 +31,9 @@ class GraduationEntry(BaseModel):
     belt: str
     degree: int = 0
     prajied: Optional[int] = None
+    # Output-only context (ignored on input; set server-side):
+    status: Optional[str] = None          # "pending" | "approved"
+    locked_by_student: bool = False
 
 
 class CompetitionOut(BaseModel):

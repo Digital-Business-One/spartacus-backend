@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -38,7 +38,13 @@ class ClassDetailOut(BaseModel):
 
 
 class GraduationEntry(BaseModel):
-    """Belt + degree per modality (mirrors profile.GraduationEntry)."""
+    """Belt + degree per modality (mirrors profile.GraduationEntry).
+
+    `status`: "approved" (staff-set) or "pending" (student's first insert,
+    awaiting staff approval in the graduations dashboard).
+    `locked_by_student`: the student already did the one-time insert and can
+    no longer edit this modality from the app.
+    """
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel,
     )
@@ -46,6 +52,11 @@ class GraduationEntry(BaseModel):
     belt: str
     degree: int = 0
     prajied: Optional[int] = None
+    status: str = "approved"
+    locked_by_student: bool = False
+    graded_by: Optional[str] = None
+    graded_by_name: Optional[str] = None
+    graded_at: Optional[str] = None
 
 
 class CompetitionOut(BaseModel):
@@ -63,6 +74,7 @@ class AccountOut(BaseModel):
     """Listing card payload. Used by GET /accounts (paginated)."""
     uid: str
     name: str
+    nickname: Optional[str] = None
     email: str
     roles: list[str]
     status: str
@@ -98,6 +110,7 @@ class AccountDetailOut(BaseModel):
     # Identity
     uid: str
     name: str
+    nickname: Optional[str] = None
     email: Optional[str] = None
     email_verified: bool = False
     tax_id: Optional[str] = None
@@ -158,8 +171,35 @@ class AccountListPage(BaseModel):
     total_pages: int
 
 
+class WarningRequest(BaseModel):
+    """POST /accounts/{uid}/warning — disciplinary warning with a reason."""
+    reason: str
+
+    @model_validator(mode="after")
+    def require_reason(self) -> "WarningRequest":
+        self.reason = self.reason.strip()
+        if not self.reason:
+            raise ValueError("Motivo da advertência é obrigatório")
+        if len(self.reason) > 500:
+            raise ValueError("Motivo deve ter no máximo 500 caracteres")
+        return self
+
+
+class NicknameRequest(BaseModel):
+    """PATCH /accounts/{uid}/nickname — empty string removes the nickname."""
+    nickname: str
+
+    @model_validator(mode="after")
+    def normalize(self) -> "NicknameRequest":
+        self.nickname = self.nickname.strip()
+        if len(self.nickname) > 30:
+            raise ValueError("Apelido deve ter no máximo 30 caracteres")
+        return self
+
+
 class TransitionRequest(BaseModel):
     action: str
+    reason: Optional[str] = None  # used by 'expel' (suspension)
 
 
 class TransitionResponse(BaseModel):

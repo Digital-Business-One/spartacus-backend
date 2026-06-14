@@ -13,9 +13,13 @@ AccountHistoryEventType = Literal[
     "creation",
     "approval",
     "suspension",
+    "warning",
     "edit",
     "donation",
+    "support",
     "attendance",
+    "account",
+    "graduation",
 ]
 
 

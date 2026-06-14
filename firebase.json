@@ -3,17 +3,20 @@
     {
       "source": "functions/send_email",
       "runtime": "python312",
-      "codebase": "send-email"
+      "codebase": "send-email",
+      "ignore": ["venv", "venv/**", "__pycache__", "**/__pycache__/**"]
     },
     {
       "source": "functions/orchestrator",
       "runtime": "python312",
-      "codebase": "orchestrator"
+      "codebase": "orchestrator",
+      "ignore": ["venv", "venv/**", "__pycache__", "**/__pycache__/**"]
     },
     {
       "source": "functions/send_push",
       "runtime": "python312",
-      "codebase": "send-push"
+      "codebase": "send-push",
+      "ignore": ["venv", "venv/**", "__pycache__", "**/__pycache__/**"]
     }
   ],
   "storage": {

@@ -62,7 +62,7 @@ EVENT_RULES: dict[str, dict] = {
     # ══ POSTS (post, event, championship) ═════════════════════════════════════
 
     "post.created": {
-        "channels": ["timeline", "calendar"],
+        "channels": ["timeline", "calendar", "push"],
         "timeline": {
             "action": "create",
             "visibility": "public",
@@ -71,6 +71,12 @@ EVENT_RULES: dict[str, dict] = {
         "calendar": {
             "action": "create",
             "only_types": ["event", "championship"],
+        },
+        "push": {
+            "target": "all_members",
+            "exclude_author": True,
+            "title_template": "{author_name}",
+            "body_template": "{title}",
         },
     },
     "post.updated": {
@@ -99,6 +105,82 @@ EVENT_RULES: dict[str, dict] = {
 
     # ══ PRESENÇA ══════════════════════════════════════════════════════════════
 
+    "account.warned": {
+        "channels": ["push"],
+        "push": [
+            {
+                # Aluno (e responsáveis, se menor)
+                "target": "owner_and_guardian",
+                "title_template": "Você recebeu uma advertência",
+                "body_template": "Motivo: {reason}",
+            },
+            {
+                # Demais staff, exceto quem registrou
+                "target": "staff_except_author",
+                "title_template": "Advertência registrada",
+                "body_template": (
+                    "{author_name} advertiu {target_name}. Motivo: {reason}"
+                ),
+            },
+        ],
+    },
+    "account.suspended": {
+        "channels": ["push"],
+        "push": [
+            {
+                "target": "owner_and_guardian",
+                "title_template": "Sua conta foi suspensa",
+                "body_template": "Motivo: {reason}",
+            },
+            {
+                "target": "staff_except_author",
+                "title_template": "Suspensão registrada",
+                "body_template": (
+                    "{author_name} suspendeu {target_name}. Motivo: {reason}"
+                ),
+            },
+        ],
+    },
+    "graduation.approved": {
+        "channels": ["push"],
+        "push": {
+            "target": "owner_and_guardian",
+            "title_template": "{title}",
+            "body_template": "{body}",
+        },
+    },
+    "graduation.promoted": {
+        "channels": ["push"],
+        "push": {
+            "target": "owner_and_guardian",
+            "title_template": "{title}",
+            "body_template": "{body}",
+        },
+    },
+    "graduation.rejected": {
+        "channels": ["push"],
+        "push": {
+            "target": "owner_and_guardian",
+            "title_template": "{title}",
+            "body_template": "{body}",
+        },
+    },
+    "account.nickname_assigned": {
+        "channels": ["timeline", "push"],
+        "timeline": {
+            # type "post" — renders title/description in the app feed;
+            # personal_and_staff keeps it on the user's own timeline only
+            "action": "create",
+            "type": "post",
+            "visibility": "personal_and_staff",
+            "id_prefix": "apelido",
+        },
+        "push": {
+            "target": "owner_and_guardian",
+            "title_template": "{title}",
+            "body_template": "{description}",
+        },
+    },
     "checkin.registered": {
         "channels": ["timeline", "push"],
         "timeline": {
@@ -150,6 +232,16 @@ EVENT_RULES: dict[str, dict] = {
             "body_template": "Registro de presença em {turma_name} não foi confirmado",
         },
     },
+    "checkin.validation_undone": {
+        "channels": ["timeline"],
+        "timeline": {
+            "action": "update_or_create",
+            "type": "attendance",
+            "visibility": "personal_and_staff",
+            "id_prefix": "presenca",
+            "update_fields": {"validationStatus": "pending"},
+        },
+    },
     "checkin.review_requested": {
         "channels": ["timeline", "push"],
         "timeline": {
@@ -166,62 +258,76 @@ EVENT_RULES: dict[str, dict] = {
 
     # ══ DOAÇÕES ═══════════════════════════════════════════════════════════════
 
-    "donation.registered": {
+    "support.registered": {
         "channels": ["timeline", "push"],
         "timeline": {
             "action": "create",
             "type": "donation",
             "visibility": "personal_and_staff",
-            "id_prefix": "doacao",
+            "id_prefix": "apoio",
             "initial_status": "pending",
         },
         "push": {
             "target": "staff_actionable",
-            "title_template": "{author_name} registrou doação",
+            "title_template": "{author_name} registrou {support_type_label}",
             "body_template": "{donation_amount}",
             "actions": [
                 {"title": "Confirmar", "action": "CONFIRM"},
-                {"title": "Ausência", "action": "REJECT"},
+                {"title": "Recusar", "action": "REJECT"},
             ],
         },
     },
-    "donation.received": {
+    "support.received": {
         "channels": ["timeline", "push"],
         "timeline": {
-            "action": "update",
-            "id_prefix": "doacao",
+            # update_or_create: staff can register an already-received
+            # support with no prior support.registered timeline entry
+            "action": "update_or_create",
+            "type": "donation",
+            "visibility": "personal_and_staff",
+            "id_prefix": "apoio",
             "update_fields": {"validationStatus": "confirmed"},
         },
         "push": {
             "target": "owner_and_guardian",
-            "title_template": "Doação validada",
-            "body_template": "Sua doação de {donation_amount} foi confirmada",
+            "title_template": "Apoio validado",
+            "body_template": "Seu apoio ({donation_amount}) foi confirmado",
         },
     },
-    "donation.absent": {
+    "support.absent": {
         "channels": ["timeline", "push"],
         "timeline": {
             "action": "update",
-            "id_prefix": "doacao",
+            "id_prefix": "apoio",
             "update_fields": {"validationStatus": "absent"},
         },
         "push": {
             "target": "owner_and_guardian",
-            "title_template": "Doação não confirmada",
-            "body_template": "Seu registro de doação não foi confirmado",
+            "title_template": "Apoio não confirmado",
+            "body_template": "Seu registro de apoio não foi confirmado",
         },
     },
-    "donation.review_requested": {
+    "support.validation_undone": {
+        "channels": ["timeline"],
+        "timeline": {
+            "action": "update_or_create",
+            "type": "donation",
+            "visibility": "personal_and_staff",
+            "id_prefix": "apoio",
+            "update_fields": {"validationStatus": "pending"},
+        },
+    },
+    "support.review_requested": {
         "channels": ["timeline", "push"],
         "timeline": {
             "action": "update",
-            "id_prefix": "doacao",
+            "id_prefix": "apoio",
             "update_fields": {"reviewRequested": True},
         },
         "push": {
             "target": "owner_and_guardian",
-            "title_template": "Revisão de doação solicitada",
-            "body_template": "Solicitação de revisão de doação registrada",
+            "title_template": "Revisão de apoio solicitada",
+            "body_template": "Solicitação de revisão de apoio registrada",
         },
     },
 
@@ -369,6 +475,24 @@ def _resolve_staff_uids(db, project_id: str) -> list[str]:
         data = m.to_dict()
         if staff_roles & set(data.get("roles", [])):
             uids.append(data["userId"])
+    return uids
+
+
+def _resolve_all_member_uids(db, project_id: str) -> list[str]:
+    """All active member UIDs for a project (any role), deduplicated."""
+    memberships = (
+        db.collection("memberships")
+        .where("projectId", "==", project_id)
+        .where("status", "==", "active")
+        .stream()
+    )
+    seen: set[str] = set()
+    uids: list[str] = []
+    for m in memberships:
+        uid = m.to_dict().get("userId", "")
+        if uid and uid not in seen:
+            seen.add(uid)
+            uids.append(uid)
     return uids
 
 
@@ -585,6 +709,10 @@ def _handle_calendar(rule, event_data, payload, doc_path, db):
             "startDate": payload.get("event_date"),
             "endDate": payload.get("event_end_date"),
             "location": payload.get("event_location"),
+            "eventCategory": payload.get("event_category"),
+            "modalityId": payload.get("modality_id"),
+            "organizer": payload.get("organizer"),
+            "registrationLink": payload.get("registration_link"),
             "origin": payload.get("origin", "timeline_wizard"),
             "sourcePostRef": f"posts/{entity_id}",
             "sourceEventRef": doc_path,
@@ -609,23 +737,42 @@ def _handle_calendar(rule, event_data, payload, doc_path, db):
         print(f"OK: event={event_data.get('eventId')} channel=calendar action=delete id={cal_doc_id}")
 
 
-def _handle_push(rule, event_data, payload, doc_path, db):
-    push = rule["push"]
+def _resolve_push_recipients(push, payload, project_id, db):
+    """Resolve the recipient UIDs for a single push spec by its target."""
     target = push.get("target", "")
-    project_id = event_data.get("projectId", "")
-
-    recipients = []
+    author_uid = payload.get("author_uid", "")
     if target == "owner_and_guardian":
         target_uid = payload.get("target_uid") or payload.get("uid", "")
+        recipients = []
         if target_uid:
             recipients.append(target_uid)
             recipients.extend(_resolve_guardians(db, target_uid, project_id))
-    elif target in ("staff", "staff_actionable"):
-        recipients = _resolve_staff_uids(db, project_id)
+        return recipients
+    if target in ("staff", "staff_actionable"):
+        return _resolve_staff_uids(db, project_id)
+    if target == "staff_except_author":
+        return [
+            uid for uid in _resolve_staff_uids(db, project_id)
+            if uid != author_uid
+        ]
+    if target == "all_members":
+        recipients = _resolve_all_member_uids(db, project_id)
+        if push.get("exclude_author"):
+            recipients = [uid for uid in recipients if uid != author_uid]
+        return recipients
+    return []
+
+
+def _enqueue_push(push, event_data, payload, doc_path, db):
+    """Resolve recipients for one push spec and enqueue a doc per user."""
+    project_id = event_data.get("projectId", "")
+    target = push.get("target", "")
+    recipients = _resolve_push_recipients(push, payload, project_id, db)
 
     title = _safe_format(push.get("title_template", ""), payload)
     body = _safe_format(push.get("body_template", ""), payload)
 
+    count = 0
     for uid in recipients:
         if not uid:
             continue
@@ -644,8 +791,21 @@ def _handle_push(rule, event_data, payload, doc_path, db):
         if target == "staff_actionable":
             push_doc["actions"] = push.get("actions", [])
         db.collection("push_queue").add(push_doc)
+        count += 1
+    print(
+        f"OK: event={event_data.get('eventId')} channel=push "
+        f"target={target} recipients={count}"
+    )
 
-    print(f"OK: event={event_data.get('eventId')} channel=push target={target} recipients={len(recipients)}")
+
+def _handle_push(rule, event_data, payload, doc_path, db):
+    # `push` may be a single spec (dict) or several (list) — e.g. moderation
+    # events notify the student AND all staff with distinct messages.
+    specs = rule["push"]
+    if isinstance(specs, dict):
+        specs = [specs]
+    for push in specs:
+        _enqueue_push(push, event_data, payload, doc_path, db)
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────

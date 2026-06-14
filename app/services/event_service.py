@@ -25,6 +25,15 @@ def _to_iso(value: Optional[str]) -> Optional[str]:
     return f"{y}-{mo}-{d}{time}"
 
 
+_STAFF_ROLES = {"owner", "assistant", "teacher", "instructor"}
+
+
+def can_create_event(roles: list[str]) -> bool:
+    """Event creation requires BOTH the `social` role and a staff role."""
+    rset = set(roles or [])
+    return "social" in rset and bool(_STAFF_ROLES & rset)
+
+
 class EventService:
     # Written by the orchestrator Cloud Function when a post of type
     # event/championship is created. NOT the "events" collection (that one
@@ -63,6 +72,10 @@ class EventService:
                     end_date=_to_iso(data.get("endDate")),
                     location=data.get("location"),
                     description=data.get("description"),
+                    event_category=data.get("eventCategory"),
+                    modality_id=data.get("modalityId"),
+                    organizer=data.get("organizer"),
+                    registration_link=data.get("registrationLink"),
                 )
             )
 

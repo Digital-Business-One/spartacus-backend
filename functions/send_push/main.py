@@ -125,7 +125,7 @@ def send_push(
             "sound": "default",
             "priority": "high",
             "data": {
-                "event_id": fields.get("event_id", ""),
+                "event_id": data.get("event_id", ""),
                 "entity_type": data.get("entity_type", ""),
                 "entity_id": data.get("entity_id", ""),
                 "source_event_ref": source_event_ref,

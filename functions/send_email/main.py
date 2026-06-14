@@ -11,19 +11,19 @@ import firebase_admin
 from firebase_admin import credentials as _creds
 from firebase_admin import firestore
 from firebase_functions import firestore_fn, options
-from firebase_functions.params import SecretParam
-
-# SendGrid API key — bound as a Secret Manager secret in production,
-# read from env var in the emulator.
-SENDGRID_API_KEY = SecretParam("SENDGRID_API_KEY")
 
 # Runtime options for `firebase deploy` (region/memory/timeout/SA + secrets).
+# secrets=["NAME"] binds an existing Secret Manager secret to the function
+# and surfaces it as an env var of the same name at runtime. Using a plain
+# string (not SecretParam) — SecretParam is for build-time template params,
+# which the firebase CLI serializes as `{{ params.NAME }}` and breaks the
+# secret-version lookup.
 options.set_global_options(
     region="us-east1",
     memory=options.MemoryOption.MB_256,
     timeout_sec=30,
     service_account="fn-send-email@spartacus-artes-marciais.iam.gserviceaccount.com",
-    secrets=[SENDGRID_API_KEY],
+    secrets=["SENDGRID_API_KEY"],
 )
 
 if os.environ.get("FUNCTIONS_EMULATOR"):
@@ -80,9 +80,10 @@ def send_email(
     if isinstance(data, dict):
         data["subject"] = subject
 
-    # SecretParam.value resolves to the runtime env var (bound from Secret
-    # Manager in prod; from docker-compose env in the emulator).
-    api_key = SENDGRID_API_KEY.value
+    # secrets=["SENDGRID_API_KEY"] in global options binds the secret as an
+    # env var at runtime in prod; docker-compose injects the same env var
+    # in the emulator.
+    api_key = os.environ.get("SENDGRID_API_KEY", "")
 
     # Dev fallback: no SendGrid key → log the email (including any CTA link)
     # instead of actually sending. When a real key is present, always send —

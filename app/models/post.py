@@ -24,6 +24,9 @@ class LinkPreviewIn(BaseModel):
     description: str = ""
 
 
+EventCategory = Literal["own", "external", "guest_class"]
+
+
 class PostCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
@@ -36,6 +39,11 @@ class PostCreate(BaseModel):
     event_date: Optional[str] = None
     event_end_date: Optional[str] = None
     event_location: Optional[str] = None
+    # event extras (backoffice calendar): own | external | guest_class
+    event_category: Optional[EventCategory] = None
+    modality_id: Optional[str] = None
+    organizer: Optional[str] = None
+    registration_link: Optional[str] = None
 
 
 class PostUpdate(BaseModel):
@@ -65,6 +73,10 @@ class PostOut(BaseModel):
     event_date: Optional[str] = None
     event_end_date: Optional[str] = None
     event_location: Optional[str] = None
+    event_category: Optional[EventCategory] = None
+    modality_id: Optional[str] = None
+    organizer: Optional[str] = None
+    registration_link: Optional[str] = None
     status: str
     created_at: str
     updated_at: Optional[str] = None

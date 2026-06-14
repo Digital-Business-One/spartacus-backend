@@ -3,6 +3,8 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from app.models.account import GraduationEntry
+
 
 class AttendanceRecord(BaseModel):
     model_config = ConfigDict(
@@ -61,6 +63,7 @@ class StudentAttendanceCard(BaseModel):
 
     user_id: str
     name: str
+    nickname: Optional[str] = None
     initials: str
     age: Optional[int] = None
     age_category: Optional[str] = None       # "Kids", "Juvenil", "Adulto"...
@@ -69,6 +72,8 @@ class StudentAttendanceCard(BaseModel):
     is_dependent: bool = False
     guardian_uid: Optional[str] = None
     guardian_name: Optional[str] = None
+    # Belt + degree per modality (same shape as account.graduation)
+    graduation: Optional[dict[str, GraduationEntry]] = None
     # Attendance state for today's aula
     # values: "absent" | "registered" | "confirmed"
     status: str = "absent"

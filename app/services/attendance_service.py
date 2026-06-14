@@ -8,6 +8,7 @@ from firebase_admin import firestore
 
 from app.events.models import DomainEvent, ValidationPayload
 from app.logging.decorator import log
+from app.models.account import GraduationEntry
 from app.models.attendance import (
     AttendanceActionOut,
     AttendanceDashboardOut,
@@ -610,10 +611,21 @@ class AttendanceService:
                 confirmed_at = att.get("validatedAt")
 
             age = _calc_age(ud.get("birthDate"))
+            graduation_raw = ud.get("graduation") or {}
+            graduation = {
+                k: GraduationEntry(
+                    belt=v.get("belt", ""),
+                    degree=v.get("degree", 0),
+                    prajied=v.get("prajied"),
+                )
+                for k, v in graduation_raw.items()
+                if isinstance(v, dict)
+            } or None
             students.append(
                 StudentAttendanceCard(
                     user_id=uid,
                     name=ud.get("name", ""),
+                    nickname=ud.get("nickname"),
                     initials=_initials(ud.get("name", "")),
                     age=age,
                     age_category=ud.get("ageCategory"),
@@ -622,6 +634,7 @@ class AttendanceService:
                     is_dependent=bool(ud.get("guardianUid")),
                     guardian_uid=ud.get("guardianUid"),
                     guardian_name=None,
+                    graduation=graduation,
                     status=status,
                     attendance_id=attendance_id,
                     source=source,
@@ -716,15 +729,26 @@ class AttendanceService:
 
         att_id: str
         if existing:
+            cur = existing[0].to_dict()
+            # Record which column the card came from, so undo can return it
+            # there. A re-confirm keeps the originally captured previous.
+            prev_status = (
+                cur.get("status")
+                if cur.get("status") != "confirmed"
+                else cur.get("previousStatus", "registered")
+            )
             ref = existing[0].reference
             ref.update({
                 "status": "confirmed",
+                "previousStatus": prev_status,
                 "validatedBy": actor_uid,
                 "validatedAt": now_iso,
                 "source": source,
             })
             att_id = ref.id
         else:
+            # Staff registered straight from the "Ausente" column — the
+            # previous column is column 1 (absent).
             _, ref = db.collection(self._ATTENDANCE).add({
                 "projectId": project_id,
                 "userId": user_id,
@@ -734,6 +758,7 @@ class AttendanceService:
                 "turmaName": class_name,
                 "timestamp": now_iso,
                 "status": "confirmed",
+                "previousStatus": "absent",
                 "validatedBy": actor_uid,
                 "validatedAt": now_iso,
                 "source": source,
