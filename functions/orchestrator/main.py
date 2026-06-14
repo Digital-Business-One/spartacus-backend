@@ -256,7 +256,9 @@ EVENT_RULES: dict[str, dict] = {
         },
     },
 
-    # ══ DOAÇÕES ═══════════════════════════════════════════════════════════════
+    # ══ APOIO (doações + serviços) ════════════════════════════════════════════
+    # support.* substitui as antigas regras donation.* (RFC Apoio): registra,
+    # valida (received/absent), desfaz validação e solicita revisão.
 
     "support.registered": {
         "channels": ["timeline", "push"],
