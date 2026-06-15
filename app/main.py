@@ -100,43 +100,7 @@ except ValueError:
 @public
 @app.get("/health")
 def health_check():
-    # Temporary diagnostic (BUG-02): expose what the RUNNING process sees so we
-    # can localize why router @public routes aren't registered in prod.
-    import inspect
-
-    from app.security.decorator import _PUBLIC_FUNCTIONS, _PUBLIC_PATTERNS
-
-    routes_dbg = []
-    for r in app.routes:
-        path = getattr(r, "path", "")
-        if not any(k in path for k in ("classes", "/projects", "/health")):
-            continue
-        ep = getattr(r, "endpoint", None)
-        unwrapped = inspect.unwrap(ep) if ep is not None else None
-        routes_dbg.append({
-            "path": path,
-            "qualname": getattr(ep, "__qualname__", None),
-            "is_public_attr": getattr(ep, "__is_public__", False),
-            "unwrapped_attr": getattr(unwrapped, "__is_public__", False),
-            "ep_in_set": ep in _PUBLIC_FUNCTIONS,
-            "unwrapped_in_set": unwrapped in _PUBLIC_FUNCTIONS,
-        })
-
-    func_names = sorted(
-        getattr(f, "__qualname__", str(f)) for f in _PUBLIC_FUNCTIONS
-    )
-    all_paths = sorted({getattr(r, "path", "") for r in app.routes})
-    return {
-        "status": "ok",
-        "public_routes": sorted({p.pattern for _, p in _PUBLIC_PATTERNS}),
-        "public_funcs_count": len(_PUBLIC_FUNCTIONS),
-        "public_funcs": func_names,
-        "total_app_routes": len(app.routes),
-        "all_app_paths": all_paths,
-        "classes_router_routes": len(classes.router.routes),
-        "projects_router_routes": len(projects.router.routes),
-        "routes": routes_dbg,
-    }
+    return {"status": "ok"}
 
 
 @app.get("/me")

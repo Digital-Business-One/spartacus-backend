@@ -13,10 +13,28 @@ client = TestClient(app)
 def test_health():
     response = client.get("/health")
     assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "ok"
-    # Diagnostic field (BUG-02): parameterized public routes must be registered.
-    assert "^/projects/[^/]+/classes$" in body["public_routes"]
+    assert response.json() == {"status": "ok"}
+
+
+def test_router_routes_are_registered():
+    """Regression guard (BUG-02): include_router() routes must land in the app.
+
+    A newer Starlette (shipped to prod because the Docker image didn't pin
+    uv.lock) silently dropped every include_router route, so AuthMiddleware
+    returned 401 for all of them. Keep an explicit check that public router
+    routes exist and are reachable without a token.
+    """
+    from app.security.decorator import _PUBLIC_PATTERNS
+
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/projects/{project_id}/classes" in paths
+    assert "/projects" in paths
+    # The classes listing must be registered as public (AuthMiddleware lets it
+    # through without a token).
+    assert any(
+        method == "GET" and pattern.match("/projects/spartacus/classes")
+        for method, pattern in _PUBLIC_PATTERNS
+    )
 
 
 def test_me_sem_token_retorna_401():
