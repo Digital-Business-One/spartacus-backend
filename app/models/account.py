@@ -11,6 +11,10 @@ class AccountAction(BaseModel):
 
 
 class AddressOut(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel,
+    )
+
     postal_code: Optional[str] = None
     street: Optional[str] = None
     number: Optional[str] = None
