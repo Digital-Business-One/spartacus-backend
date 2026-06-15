@@ -13,7 +13,10 @@ client = TestClient(app)
 def test_health():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    # Diagnostic field (BUG-02): parameterized public routes must be registered.
+    assert "^/projects/[^/]+/classes$" in body["public_routes"]
 
 
 def test_me_sem_token_retorna_401():
