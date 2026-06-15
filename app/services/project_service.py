@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -5,6 +6,8 @@ from firebase_admin import firestore
 
 from app.logging.decorator import log
 from app.models.project import MyProjectOut, ProjectCreate, ProjectOut, ProjectUpdate
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectService:
@@ -15,7 +18,19 @@ class ProjectService:
     def list_all(self) -> list[ProjectOut]:
         db = firestore.client()
         docs = db.collection(self._COLLECTION).stream()
-        return [ProjectOut(**d.to_dict()) for d in docs if d.exists]
+        result: list[ProjectOut] = []
+        for d in docs:
+            if not d.exists:
+                continue
+            data = d.to_dict()
+            # Firestore doc id is the source of truth for the project id; a doc
+            # seeded without an explicit `id` field must not break the listing.
+            data.setdefault("id", d.id)
+            try:
+                result.append(ProjectOut(**data))
+            except Exception as exc:  # noqa: BLE001 — never strand the whole list
+                logger.warning("Skipping malformed project doc %s: %s", d.id, exc)
+        return result
 
     @log
     def create(self, data: ProjectCreate) -> ProjectOut:

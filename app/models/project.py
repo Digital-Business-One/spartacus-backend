@@ -43,7 +43,7 @@ class ProjectOut(BaseModel):
     legal_nature: Optional[str] = None
     founded_at: Optional[str] = None
     is_root: bool = False
-    created_at: str
+    created_at: Optional[str] = None
 
 
 class MyProjectOut(BaseModel):
