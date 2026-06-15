@@ -125,11 +125,16 @@ def health_check():
     func_names = sorted(
         getattr(f, "__qualname__", str(f)) for f in _PUBLIC_FUNCTIONS
     )
+    all_paths = sorted({getattr(r, "path", "") for r in app.routes})
     return {
         "status": "ok",
         "public_routes": sorted({p.pattern for _, p in _PUBLIC_PATTERNS}),
         "public_funcs_count": len(_PUBLIC_FUNCTIONS),
         "public_funcs": func_names,
+        "total_app_routes": len(app.routes),
+        "all_app_paths": all_paths,
+        "classes_router_routes": len(classes.router.routes),
+        "projects_router_routes": len(projects.router.routes),
         "routes": routes_dbg,
     }
 
