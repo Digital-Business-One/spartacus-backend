@@ -100,7 +100,14 @@ except ValueError:
 @public
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    # Temporary diagnostic (BUG-02): expose the public-route patterns the
+    # RUNNING process actually registered, to confirm what code is deployed.
+    from app.security.decorator import _PUBLIC_PATTERNS
+
+    return {
+        "status": "ok",
+        "public_routes": sorted({p.pattern for _, p in _PUBLIC_PATTERNS}),
+    }
 
 
 @app.get("/me")
