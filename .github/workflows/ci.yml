@@ -204,6 +204,17 @@ jobs:
             --update-env-vars="^@^ROOT_PROJECT_ID=spartacus-artes-marciais@CORS_ORIGINS=https://backoffice.spartacus.app.br,https://spartacus.app.br,https://spartacus-artes-marciais.web.app,https://spartacus-artes-marciais.firebaseapp.com" \
             --quiet
 
+      # Guard against pinned-traffic: if traffic was ever pinned to a specific
+      # revision, `gcloud run deploy` creates a new revision but does NOT serve
+      # it (deploys succeed yet prod runs stale code). Force 100% traffic to the
+      # latest ready revision so every deploy is actually served.
+      - name: Route traffic to latest revision
+        run: |
+          gcloud run services update-traffic spartacus-backend \
+            --region=${{ env.REGION }} \
+            --to-latest \
+            --quiet
+
   # ─── Deploy → Cloud Functions (via firebase-tools) ───────────────────────────
   # Uses `firebase deploy --only functions:<codebase>` against firebase.json so
   # the @firestore_fn decorators (firebase-functions Python SDK) are discovered
