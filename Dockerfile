@@ -5,8 +5,12 @@ WORKDIR /app
 
 RUN pip install uv
 
-COPY pyproject.toml .
-RUN uv sync
+# Copy the lockfile so deps resolve to the EXACT pinned versions. Without it,
+# `uv sync` re-resolves the loose `>=` ranges in pyproject.toml to whatever is
+# newest at build time — which silently shipped a newer Starlette whose router
+# behavior dropped all include_router() routes in prod (BUG-02).
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen
 
 # Código montado como volume no docker-compose (hot reload)
 CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
@@ -18,8 +22,9 @@ WORKDIR /app
 
 RUN pip install uv
 
-COPY pyproject.toml .
-RUN uv sync --no-dev
+# Copy the lockfile so prod installs the EXACT pinned versions (see dev stage).
+COPY pyproject.toml uv.lock ./
+RUN uv sync --no-dev --frozen
 
 COPY app/ ./app/
 
