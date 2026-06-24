@@ -16,7 +16,6 @@ from app.models.medical_history import (
     PendingAnamneseItem,
     SymptomsIn,
 )
-from app.services.account_service import AccountService
 
 
 class MedicalHistoryService:
@@ -62,15 +61,10 @@ class MedicalHistoryService:
             "filledBy": actor_uid,
             "reviewedAt": None,
             "reviewedBy": None,
+            "reviewNote": None,
         }
 
         db.collection(self._COLLECTION).document(doc_id).set(doc_data)
-
-        # Trigger state transition:
-        # waiting_medical_history → pending_medical_history_approval
-        _, event = AccountService().execute_transition(
-            project_id, user_id, "submit_medical_history", actor_uid
-        )
 
         out = MedicalHistoryOut(
             project_id=project_id,
@@ -84,9 +78,10 @@ class MedicalHistoryService:
             general_comments=data.general_comments,
             filled_at=now,
             filled_by=actor_uid,
+            review_note=None,
         )
 
-        return out, event
+        return out, None
 
     @log
     def list_pending(
@@ -208,4 +203,5 @@ class MedicalHistoryService:
             filled_by=d.get("filledBy"),
             reviewed_at=d.get("reviewedAt"),
             reviewed_by=d.get("reviewedBy"),
+            review_note=d.get("reviewNote"),
         )

@@ -136,6 +136,7 @@ class MedicalHistoryOut(BaseModel):
     filled_by: Optional[str] = None
     reviewed_at: Optional[str] = None
     reviewed_by: Optional[str] = None
+    review_note: Optional[str] = None
 
 
 class PendingAnamneseItem(BaseModel):
