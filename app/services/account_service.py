@@ -551,28 +551,6 @@ class AccountService:
                     db, project_id, uid, actor_uid, actor_name,
                 )
 
-        # If guardian goes to waiting_medical_history: send dependents along.
-        # This lets the guardian fill all anamneses (own + dependents) in
-        # the same session, instead of waiting for guardian's own anamnese
-        # to be approved by the team first.
-        if (
-            new_status == AccountStatus.WAITING_MEDICAL_HISTORY
-            and "guardian" in roles
-        ):
-            self._send_student_dependents_to_anamnese(
-                db, project_id, uid, actor_uid, actor_name,
-            )
-
-        # If guardian is approved without anamnese (action="approve"),
-        # students dependents still need anamnese — handled by
-        # _auto_approve_dependents above which moves them to
-        # waiting_medical_history.
-
-        # If guardian is approved without anamnese (action="approve"),
-        # students dependents still need anamnese — handled by
-        # _auto_approve_dependents above which moves them to
-        # waiting_medical_history.
-
         # Build event for notification. Suspension emits a moderation event
         # (two pushes: student + staff except author); other actions keep
         # their e-mail/push notification event.
@@ -883,48 +861,6 @@ class AccountService:
         except auth.UserNotFoundError:
             pass  # Dependent without Firebase Auth account — claims not needed
 
-    def _send_student_dependents_to_anamnese(
-        self,
-        db,
-        project_id: str,
-        guardian_uid: str,
-        actor_uid: str,
-        actor_name: str,
-    ) -> None:
-        """When guardian transitions to waiting_medical_history, also send
-        any student dependents to waiting_medical_history so the guardian
-        can fill all anamneses in the same session."""
-        now_iso = datetime.now(timezone.utc).isoformat()
-        history_service = AccountHistoryService()
-        deps = (
-            db.collection(self._USERS)
-            .where("guardianUid", "==", guardian_uid)
-            .where("isDependent", "==", True)
-            .stream()
-        )
-        for dep_doc in deps:
-            dep = dep_doc.to_dict()
-            if dep.get("approvalStatus") == AccountStatus.PENDING_APPROVAL:
-                dep_doc.reference.update(
-                    {
-                        "approvalStatus": AccountStatus.WAITING_MEDICAL_HISTORY,
-                        "updatedAt": now_iso,
-                        "lastUpdatedBy": actor_uid,
-                    }
-                )
-                history_service.record(
-                    uid=dep_doc.id,
-                    project_id=project_id,
-                    event_type="approval",
-                    event_subtype="approve_to_medical",
-                    actor_uid=actor_uid,
-                    actor_name=actor_name,
-                    actor_roles=[],
-                    description=self._describe_transition(
-                        "approve_to_medical", actor_name,
-                    ),
-                )
-
     def _auto_approve_dependents(
         self,
         db,
@@ -943,54 +879,28 @@ class AccountService:
         )
         for dep_doc in deps:
             dep = dep_doc.to_dict()
-            dep_status = dep.get("approvalStatus", "")
-            if dep_status == AccountStatus.PENDING_APPROVAL:
-                # Send student dependents to anamnese (not straight to approved)
-                dep_doc.reference.update(
-                    {
-                        "approvalStatus": AccountStatus.WAITING_MEDICAL_HISTORY,
-                        "updatedAt": now_iso,
-                        "lastUpdatedBy": actor_uid,
-                    }
-                )
-                history_service.record(
-                    uid=dep_doc.id,
-                    project_id=project_id,
-                    event_type="approval",
-                    event_subtype="approve_to_medical",
-                    actor_uid=actor_uid,
-                    actor_name=actor_name,
-                    actor_roles=[],
-                    description=self._describe_transition(
-                        "approve_to_medical", actor_name,
-                    ),
-                )
-            elif dep_status == AccountStatus.PENDING_MEDICAL_HISTORY_APPROVAL:
-                # Already submitted anamnese — approve and activate
-                dep_doc.reference.update(
-                    {
-                        "approvalStatus": AccountStatus.APPROVED,
-                        "approvedBy": actor_uid,
-                        "approvedAt": now_iso,
-                        "updatedAt": now_iso,
-                        "lastUpdatedBy": actor_uid,
-                    }
-                )
-                self._activate_membership(
-                    db, project_id, dep_doc.id
-                )
-                history_service.record(
-                    uid=dep_doc.id,
-                    project_id=project_id,
-                    event_type="approval",
-                    event_subtype="approve_medical",
-                    actor_uid=actor_uid,
-                    actor_name=actor_name,
-                    actor_roles=[],
-                    description=self._describe_transition(
-                        "approve_medical", actor_name,
-                    ),
-                )
+            if dep.get("approvalStatus") != AccountStatus.PENDING_APPROVAL:
+                continue
+            dep_doc.reference.update(
+                {
+                    "approvalStatus": AccountStatus.APPROVED,
+                    "approvedBy": actor_uid,
+                    "approvedAt": now_iso,
+                    "updatedAt": now_iso,
+                    "lastUpdatedBy": actor_uid,
+                }
+            )
+            self._activate_membership(db, project_id, dep_doc.id)
+            history_service.record(
+                uid=dep_doc.id,
+                project_id=project_id,
+                event_type="approval",
+                event_subtype="approve",
+                actor_uid=actor_uid,
+                actor_name=actor_name,
+                actor_roles=[],
+                description=self._describe_transition("approve", actor_name),
+            )
 
     def _build_account_out(
         self,
