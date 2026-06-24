@@ -17,6 +17,8 @@ from enum import StrEnum
 class AccountStatus(StrEnum):
     INCOMPLETE = "incomplete"  # Dependent created via profile — partial data (RFC-07)
     PENDING_APPROVAL = "pending_approval"
+    # DEPRECATED: WAITING_MEDICAL_HISTORY and PENDING_MEDICAL_HISTORY_APPROVAL are
+    # kept for backward-compat reads of legacy documents only — no active transitions.
     WAITING_MEDICAL_HISTORY = "waiting_medical_history"
     PENDING_MEDICAL_HISTORY_APPROVAL = "pending_medical_history_approval"
     APPROVED = "approved"
@@ -69,17 +71,12 @@ TRANSITIONS: list[Transition] = [
     Transition(
         S.INCOMPLETE, S.PENDING_APPROVAL,
         "complete_registration", "Completar cadastro",
-        ANAMNESE_ONLY, "system",
+        BOTH, "system",
     ),
     # ── Team transitions: pending_approval ────────────────────────────────
     Transition(
-        S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY,
-        "approve_to_medical", "Enc. anamnese",
-        ANAMNESE_ONLY, "team",
-    ),
-    Transition(
         S.PENDING_APPROVAL, S.APPROVED,
-        "approve", "Aprovar conta", NO_ANAMNESE_ONLY, "team",
+        "approve", "Aprovar conta", BOTH, "team",
     ),
     Transition(
         S.PENDING_APPROVAL, S.WAITING_REGISTRATION_REVIEW,
@@ -87,29 +84,7 @@ TRANSITIONS: list[Transition] = [
     ),
     Transition(
         S.PENDING_APPROVAL, S.REJECTED,
-        "reject", "Rejeitar cadastro", ANAMNESE_ONLY, "team",
-    ),
-    # ── User transitions: medical history ─────────────────────────────────
-    Transition(
-        S.WAITING_MEDICAL_HISTORY, S.PENDING_MEDICAL_HISTORY_APPROVAL,
-        "submit_medical_history", "Enviar anamnese",
-        ANAMNESE_ONLY, "user",
-    ),
-    Transition(
-        S.WAITING_MEDICAL_HISTORY, S.WAITING_REGISTRATION_REVIEW,
-        "request_revision", "Solicitar revisão cadastral",
-        ANAMNESE_ONLY, "team",
-    ),
-    # ── Team transitions: medical history approval ────────────────────────
-    Transition(
-        S.PENDING_MEDICAL_HISTORY_APPROVAL, S.APPROVED,
-        "approve_medical", "Aprovar anamnese",
-        ANAMNESE_ONLY, "team",
-    ),
-    Transition(
-        S.PENDING_MEDICAL_HISTORY_APPROVAL, S.WAITING_REGISTRATION_REVIEW,
-        "request_revision", "Solicitar revisão cadastral",
-        ANAMNESE_ONLY, "team",
+        "reject", "Rejeitar cadastro", BOTH, "team",
     ),
     # ── Team transitions: approved ────────────────────────────────────────
     Transition(
@@ -141,7 +116,7 @@ TRANSITIONS: list[Transition] = [
     Transition(
         S.REJECTED, S.WAITING_REGISTRATION_REVIEW,
         "request_revision", "Solicitar revisão",
-        ANAMNESE_ONLY, "team",
+        BOTH, "team",
     ),
     # ── User transitions: registration review ─────────────────────────────
     Transition(
@@ -152,11 +127,6 @@ TRANSITIONS: list[Transition] = [
     Transition(
         S.REVISED_REGISTRATION, S.WAITING_REGISTRATION_REVIEW,
         "request_revision", "Solicitar nova revisão", BOTH, "team",
-    ),
-    Transition(
-        S.REVISED_REGISTRATION, S.WAITING_MEDICAL_HISTORY,
-        "approve_to_medical", "Enc. anamnese",
-        ANAMNESE_ONLY, "team",
     ),
     Transition(
         S.REVISED_REGISTRATION, S.APPROVED,

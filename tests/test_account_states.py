@@ -42,35 +42,47 @@ class TestResolveRoleGroup:
         assert resolve_role_group(["supporter"]) == RoleGroup.NO_ANAMNESE
 
 
-# ── Available actions: student track ─────────────────────────────────────────
+# ── Single-approval flow ──────────────────────────────────────────────────────
 
 
-class TestActionsNeedsAnamnese:
-    def test_pending_approval_student(self):
+class TestSingleApproval:
+    def test_pending_approval_student_can_approve_directly(self):
         actions = get_available_actions(S.PENDING_APPROVAL, ["student"], "team")
         names = {a.action for a in actions}
-        assert "approve_to_medical" in names
+        assert "approve" in names
+        assert "approve_to_medical" not in names
         assert "request_revision" in names
         assert "reject" in names
-        assert "approve" not in names
 
-    def test_waiting_medical_history_user_actions(self):
-        actions = get_available_actions(S.WAITING_MEDICAL_HISTORY, ["student"], "user")
+    def test_pending_approval_teacher_can_approve(self):
+        actions = get_available_actions(S.PENDING_APPROVAL, ["teacher"], "team")
         names = {a.action for a in actions}
-        assert "submit_medical_history" in names
+        assert "approve" in names
 
-    def test_pending_medical_approval_team(self):
-        actions = get_available_actions(S.PENDING_MEDICAL_HISTORY_APPROVAL, ["student"], "team")
-        names = {a.action for a in actions}
-        assert "approve_medical" in names
-        assert "request_revision" in names
+    def test_approve_targets_approved_for_student(self):
+        t = find_transition(S.PENDING_APPROVAL, "approve", ["student"])
+        assert t is not None
+        assert t.target == S.APPROVED
 
-    def test_approved_student_actions(self):
-        actions = get_available_actions(S.APPROVED, ["student"], "team")
-        names = {a.action for a in actions}
-        assert "request_revision" in names
-        assert "expel" in names
-        assert "archive" in names
+    def test_no_approve_to_medical_transition_exists(self):
+        t = find_transition(
+            S.PENDING_APPROVAL, "approve_to_medical", ["student"]
+        )
+        assert t is None
+
+    def test_no_approve_medical_transition_exists(self):
+        # state still in enum (legacy reads) but no transition out via approve_medical
+        assert find_transition(
+            S.PENDING_MEDICAL_HISTORY_APPROVAL, "approve_medical", ["student"]
+        ) is None
+
+    def test_registration_revision_still_works(self):
+        t = find_transition(S.PENDING_APPROVAL, "request_revision", ["student"])
+        assert t is not None and t.target == S.WAITING_REGISTRATION_REVIEW
+
+    def test_revised_registration_approve_targets_approved(self):
+        t = find_transition(S.REVISED_REGISTRATION, "approve", ["student"])
+        assert t is not None and t.target == S.APPROVED
 
 
 # ── Available actions: no-anamnese track ───────────────────────────────────────
@@ -83,7 +95,6 @@ class TestActionsNoAnamnese:
         assert "approve" in names
         assert "request_revision" in names
         assert "approve_to_medical" not in names
-        assert "reject" not in names
 
     def test_pending_approval_guardian(self):
         actions = get_available_actions(S.PENDING_APPROVAL, ["guardian"], "team")
@@ -108,11 +119,18 @@ class TestGuardianFlow:
         assert can_transition(S.PENDING_APPROVAL, S.APPROVED, ["guardian"])
 
     def test_guardian_cannot_go_to_medical(self):
-        assert not can_transition(S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["guardian"])
+        assert not can_transition(
+            S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["guardian"]
+        )
 
-    def test_guardian_student_goes_to_medical(self):
-        assert can_transition(S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["guardian", "student"])
-        assert not can_transition(S.PENDING_APPROVAL, S.APPROVED, ["guardian", "student"])
+    def test_guardian_student_can_be_approved_directly(self):
+        # single-approval: student+guardian now goes directly to APPROVED
+        assert can_transition(
+            S.PENDING_APPROVAL, S.APPROVED, ["guardian", "student"]
+        )
+        assert not can_transition(
+            S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["guardian", "student"]
+        )
 
 
 # ── Registration review ──────────────────────────────────────────────────────
@@ -140,16 +158,21 @@ class TestRegistrationReview:
         assert any(a.action == "request_revision" for a in actions)
 
     def test_user_submits_revision(self):
-        actions = get_available_actions(S.WAITING_REGISTRATION_REVIEW, ["student"], "user")
+        actions = get_available_actions(
+            S.WAITING_REGISTRATION_REVIEW, ["student"], "user"
+        )
         assert any(a.action == "submit_revision" for a in actions)
 
     def test_revised_to_approved(self):
         actions = get_available_actions(S.REVISED_REGISTRATION, ["teacher"], "team")
         assert any(a.action == "approve" for a in actions)
 
-    def test_revised_to_medical(self):
+    def test_revised_no_approve_to_medical(self):
+        # approve_to_medical is gone; student should get plain approve
         actions = get_available_actions(S.REVISED_REGISTRATION, ["student"], "team")
-        assert any(a.action == "approve_to_medical" for a in actions)
+        names = {a.action for a in actions}
+        assert "approve_to_medical" not in names
+        assert "approve" in names
 
 
 # ── find_transition ────────────────────────────────────────────────────────────
@@ -165,9 +188,11 @@ class TestFindTransition:
         t = find_transition(S.PENDING_APPROVAL, "nonexistent", ["teacher"])
         assert t is None
 
-    def test_action_wrong_role_group(self):
+    def test_student_can_now_approve(self):
+        # single-approval: student also gets approve → APPROVED
         t = find_transition(S.PENDING_APPROVAL, "approve", ["student"])
-        assert t is None
+        assert t is not None
+        assert t.target == S.APPROVED
 
     def test_guardian_approve_direct(self):
         t = find_transition(S.PENDING_APPROVAL, "approve", ["guardian"])
@@ -189,11 +214,15 @@ class TestCanTransition:
     def test_invalid_path(self):
         assert not can_transition(S.PENDING_APPROVAL, S.EXPELLED, ["teacher"])
 
-    def test_student_cannot_skip_anamnese(self):
-        assert not can_transition(S.PENDING_APPROVAL, S.APPROVED, ["student"])
+    def test_student_can_now_be_approved_directly(self):
+        # single-approval: no more anamnese gate
+        assert can_transition(S.PENDING_APPROVAL, S.APPROVED, ["student"])
 
-    def test_student_goes_to_medical(self):
-        assert can_transition(S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["student"])
+    def test_student_cannot_go_to_medical(self):
+        # no transition to WAITING_MEDICAL_HISTORY exists anymore
+        assert not can_transition(
+            S.PENDING_APPROVAL, S.WAITING_MEDICAL_HISTORY, ["student"]
+        )
 
 
 # ── Terminal states ────────────────────────────────────────────────────────────
