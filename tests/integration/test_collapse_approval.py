@@ -5,6 +5,10 @@ Verifica que:
   1. Um student aprovado vai direto para `approved` com membership ativa.
   2. Um guardian aprovado também leva seus dependentes direto para `approved`
      com membership ativa (sem passar por waiting_medical_history).
+  3. Guardian sem dependentes é aprovado normalmente.
+
+Usa as fixtures canônicas de tests/integration/conftest.py
+(app_client, restore_firestore autouse).
 """
 from datetime import datetime, timezone
 
