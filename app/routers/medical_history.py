@@ -7,9 +7,11 @@ from app.logging.decorator import log
 from app.models.medical_history import (
     MedicalHistoryOut,
     MedicalHistoryRequest,
+    MedicalHistoryReviewRequest,
     PendingAnamneseList,
 )
 from app.security.context import ADMIN_ROLES, auth_ctx
+from app.security.decorator import require_roles
 from app.services.medical_history_service import MedicalHistoryService
 
 router = APIRouter(prefix="/medical-history", tags=["medical-history"])
@@ -66,6 +68,27 @@ def submit_medical_history(
             source="medical_history_service",
         )
     return result
+
+
+@log
+@router.patch("/{user_id}/review")
+@require_roles("owner", "assistant", "teacher", "instructor")
+def review_medical_history(
+    user_id: str,
+    body: MedicalHistoryReviewRequest,
+) -> MedicalHistoryOut:
+    """Review (approve or request revision) a medical history submission.
+
+    Requires staff role: owner, assistant, teacher, or instructor.
+    Returns 404 if no submission exists for the user.
+    """
+    ctx = auth_ctx.get()
+    try:
+        return MedicalHistoryService().review(
+            ctx.project_id, user_id, body.action, body.note, ctx.user_id
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @log

@@ -139,6 +139,19 @@ class MedicalHistoryOut(BaseModel):
     review_note: Optional[str] = None
 
 
+class MedicalHistoryReviewRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    action: Literal["approve", "request_revision"]
+    note: str = ""
+
+    @model_validator(mode="after")
+    def note_required_on_revision(self) -> "MedicalHistoryReviewRequest":
+        if self.action == "request_revision" and not self.note.strip():
+            raise ValueError("Informe o motivo da revisão")
+        return self
+
+
 class PendingAnamneseItem(BaseModel):
     """A user (self or dependent) that needs medical history filled."""
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)

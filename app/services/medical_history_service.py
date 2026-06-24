@@ -169,6 +169,58 @@ class MedicalHistoryService:
         return result
 
     @log
+    def review(
+        self,
+        project_id: str,
+        user_id: str,
+        action: str,
+        note: str,
+        reviewer_uid: str,
+    ) -> MedicalHistoryOut:
+        db = firestore.client()
+        doc_id = f"{project_id}_{user_id}"
+        ref = db.collection(self._COLLECTION).document(doc_id)
+        if not ref.get().exists:
+            raise LookupError("Anamnese não encontrada")
+
+        now = datetime.now(timezone.utc).isoformat()
+        new_status = "approved" if action == "approve" else "needs_revision"
+        ref.update(
+            {
+                "status": new_status,
+                "reviewedAt": now,
+                "reviewedBy": reviewer_uid,
+                "reviewNote": note or None,
+            }
+        )
+
+        # Audit trail on the account history
+        reviewer_doc = db.collection(self._USERS).document(reviewer_uid).get()
+        reviewer_name = (
+            reviewer_doc.to_dict().get("name", "") if reviewer_doc.exists else ""
+        )
+        from app.services.account_history_service import AccountHistoryService
+
+        AccountHistoryService().record(
+            uid=user_id,
+            project_id=project_id,
+            event_type="account",
+            event_subtype=f"anamnese_{action}",
+            actor_uid=reviewer_uid,
+            actor_name=reviewer_name,
+            actor_roles=[],
+            description=(
+                "Anamnese aprovada"
+                if action == "approve"
+                else f"Anamnese devolvida para revisão: {note}"
+            ),
+        )
+
+        result = self.get(project_id, user_id)
+        assert result is not None
+        return result
+
+    @log
     def get(
         self, project_id: str, user_id: str
     ) -> Optional[MedicalHistoryOut]:
