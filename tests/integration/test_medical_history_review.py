@@ -349,3 +349,30 @@ class TestGuardianReadMedicalHistory:
             )
 
         assert response.status_code == 403
+
+    def test_teacher_can_read_any_medical_history(self, app_client):
+        """GET /medical-history/{uid} returns 200 for teacher (not self/guardian)."""
+        db = firestore.client()
+        student_uid = "student-read-teacher-001"
+        teacher_uid = "teacher-read-001"
+
+        _seed_user(db, student_uid, roles=["student"], status="approved")
+        _seed_user(db, teacher_uid, roles=["teacher"], status="approved")
+
+        MedicalHistoryService().submit(
+            _PROJECT_ID, student_uid, _build_medical_history_request(),
+            actor_uid=student_uid,
+        )
+
+        with patch(
+            "app.security.middleware.verify_id_token",
+            return_value=_claims(_PROJECT_ID, teacher_uid, ["teacher"]),
+        ):
+            response = app_client.get(
+                f"/medical-history/{student_uid}",
+                headers=_headers(_PROJECT_ID),
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["userId"] == student_uid

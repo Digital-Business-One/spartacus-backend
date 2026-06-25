@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
 
+from app.domain.enums import STAFF_ROLES
 from app.events import publisher
 from app.logging.decorator import log
 from app.models.medical_history import (
@@ -11,7 +12,7 @@ from app.models.medical_history import (
     PendingAnamneseList,
     PendingReviewList,
 )
-from app.security.context import ADMIN_ROLES, auth_ctx
+from app.security.context import auth_ctx
 from app.security.decorator import require_roles
 from app.services.medical_history_service import MedicalHistoryService
 
@@ -111,21 +112,21 @@ def review_medical_history(
 def get_medical_history(user_id: str) -> MedicalHistoryOut:
     """Get medical history for a user.
 
-    Team members (owner/assistant) can read any user's form.
-    Users can read their own form.
+    Staff (owner/assistant/teacher/instructor) can read any user's form.
+    Users can read their own form. Guardians can read their dependents' forms.
     """
     ctx = auth_ctx.get()
     if ctx is None:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
     is_self = ctx.user_id == user_id
-    is_admin = any(r in ADMIN_ROLES for r in ctx.roles)
+    is_staff = any(r in STAFF_ROLES for r in ctx.roles)
     is_guardian = (
         not is_self
-        and not is_admin
+        and not is_staff
         and MedicalHistoryService().is_guardian_of(ctx.user_id, user_id)
     )
-    if not is_self and not is_admin and not is_guardian:
+    if not is_self and not is_staff and not is_guardian:
         raise HTTPException(status_code=403, detail="Permissão insuficiente")
 
     result = MedicalHistoryService().get(ctx.project_id, user_id)
