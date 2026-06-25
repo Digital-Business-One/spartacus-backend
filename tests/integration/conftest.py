@@ -28,7 +28,9 @@ _AUTH_HOST = "localhost:9099"
 _STORAGE_HOST = "localhost:9199"
 
 _REPO_ROOT = Path(__file__).parents[2]  # tests/integration -> repo root
-_COMPOSE_FILE = str(_REPO_ROOT / "docker-compose.yml")
+# The emulator docker-compose lives in the sibling `infra` repo (monorepo was
+# split into independent repos); its volumes are relative to that directory.
+_COMPOSE_FILE = str(_REPO_ROOT.parent / "infra" / "docker-compose.yml")
 
 # ── Env vars — definidas antes de qualquer import do app ─────────────────────
 
