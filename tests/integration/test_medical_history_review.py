@@ -246,3 +246,106 @@ class TestMedicalHistoryReview:
             )
 
         assert response.status_code == 403
+
+
+# ── Task 8: Guardian read access (GET /medical-history/{user_id}) ─────────────
+
+
+def _seed_dependent(db, dep_uid: str, guardian_uid: str, *, status: str) -> None:
+    """Seed a dependent user linked to guardian_uid."""
+    now = _now()
+    db.collection("users").document(dep_uid).set(
+        {
+            "uid": dep_uid,
+            "name": f"Dependent {dep_uid}",
+            "email": None,
+            "approvalStatus": status,
+            "isDependent": True,
+            "guardianUid": guardian_uid,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+    )
+
+
+class TestGuardianReadMedicalHistory:
+    def test_is_guardian_of_returns_true_for_own_dependent(self, app_client):
+        """is_guardian_of returns True when guardian_uid matches the dependent."""
+        db = firestore.client()
+        guardian_uid = "guardian-read-001"
+        dep_uid = "dependent-read-001"
+
+        _seed_user(db, guardian_uid, roles=["guardian"], status="approved")
+        _seed_dependent(db, dep_uid, guardian_uid, status="approved")
+
+        svc = MedicalHistoryService()
+        assert svc.is_guardian_of(guardian_uid, dep_uid) is True
+
+    def test_is_guardian_of_returns_false_for_non_guardian(self, app_client):
+        """is_guardian_of returns False for unrelated user."""
+        db = firestore.client()
+        guardian_uid = "guardian-read-002"
+        stranger_uid = "stranger-read-002"
+        dep_uid = "dependent-read-002"
+
+        _seed_user(db, guardian_uid, roles=["guardian"], status="approved")
+        _seed_user(db, stranger_uid, roles=["student"], status="approved")
+        _seed_dependent(db, dep_uid, guardian_uid, status="approved")
+
+        svc = MedicalHistoryService()
+        assert svc.is_guardian_of(stranger_uid, dep_uid) is False
+
+    def test_guardian_can_read_dependents_medical_history(self, app_client):
+        """GET /medical-history/{dep_uid} returns 200 for the dependent's guardian."""
+        db = firestore.client()
+        guardian_uid = "guardian-read-003"
+        dep_uid = "dependent-read-003"
+
+        _seed_user(db, guardian_uid, roles=["guardian"], status="approved")
+        _seed_dependent(db, dep_uid, guardian_uid, status="approved")
+
+        # Submit anamnese for the dependent (acting as guardian)
+        MedicalHistoryService().submit(
+            _PROJECT_ID, dep_uid, _build_medical_history_request(),
+            actor_uid=guardian_uid,
+        )
+
+        with patch(
+            "app.security.middleware.verify_id_token",
+            return_value=_claims(_PROJECT_ID, guardian_uid, ["guardian"]),
+        ):
+            response = app_client.get(
+                f"/medical-history/{dep_uid}",
+                headers=_headers(_PROJECT_ID),
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["userId"] == dep_uid
+
+    def test_non_guardian_non_staff_gets_403_on_read(self, app_client):
+        """GET /medical-history/{dep_uid} returns 403 for an unrelated user."""
+        db = firestore.client()
+        guardian_uid = "guardian-read-004"
+        stranger_uid = "stranger-read-004"
+        dep_uid = "dependent-read-004"
+
+        _seed_user(db, guardian_uid, roles=["guardian"], status="approved")
+        _seed_user(db, stranger_uid, roles=["student"], status="approved")
+        _seed_dependent(db, dep_uid, guardian_uid, status="approved")
+
+        MedicalHistoryService().submit(
+            _PROJECT_ID, dep_uid, _build_medical_history_request(),
+            actor_uid=guardian_uid,
+        )
+
+        with patch(
+            "app.security.middleware.verify_id_token",
+            return_value=_claims(_PROJECT_ID, stranger_uid, ["student"]),
+        ):
+            response = app_client.get(
+                f"/medical-history/{dep_uid}",
+                headers=_headers(_PROJECT_ID),
+            )
+
+        assert response.status_code == 403

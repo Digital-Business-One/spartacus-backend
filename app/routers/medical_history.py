@@ -105,7 +105,12 @@ def get_medical_history(user_id: str) -> MedicalHistoryOut:
 
     is_self = ctx.user_id == user_id
     is_admin = any(r in ADMIN_ROLES for r in ctx.roles)
-    if not is_self and not is_admin:
+    is_guardian = (
+        not is_self
+        and not is_admin
+        and MedicalHistoryService().is_guardian_of(ctx.user_id, user_id)
+    )
+    if not is_self and not is_admin and not is_guardian:
         raise HTTPException(status_code=403, detail="Permissão insuficiente")
 
     result = MedicalHistoryService().get(ctx.project_id, user_id)

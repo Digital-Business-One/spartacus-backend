@@ -134,6 +134,17 @@ class MedicalHistoryService:
 
         return items
 
+    def is_guardian_of(self, guardian_uid: str, target_uid: str) -> bool:
+        """Return True if guardian_uid is the registered guardian of target_uid."""
+        db = firestore.client()
+        target_doc = db.collection(self._USERS).document(target_uid).get()
+        if not target_doc.exists:
+            return False
+        target = target_doc.to_dict()
+        return bool(
+            target.get("isDependent") and target.get("guardianUid") == guardian_uid
+        )
+
     def _assert_guardian_of(
         self, guardian_uid: str, target_uid: str
     ) -> None:
