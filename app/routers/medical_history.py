@@ -9,6 +9,7 @@ from app.models.medical_history import (
     MedicalHistoryRequest,
     MedicalHistoryReviewRequest,
     PendingAnamneseList,
+    PendingReviewList,
 )
 from app.security.context import ADMIN_ROLES, auth_ctx
 from app.security.decorator import require_roles
@@ -68,6 +69,20 @@ def submit_medical_history(
             source="medical_history_service",
         )
     return result
+
+
+@log
+@router.get("/pending-review")
+@require_roles("owner", "assistant", "teacher", "instructor")
+def list_pending_review() -> PendingReviewList:
+    """List medical histories awaiting staff review (status=pending_approval).
+
+    Requires staff role: owner, assistant, teacher, or instructor.
+    Returns items sorted by submission date ascending.
+    """
+    ctx = auth_ctx.get()
+    items = MedicalHistoryService().list_pending_review(ctx.project_id)
+    return PendingReviewList(items=items)
 
 
 @log

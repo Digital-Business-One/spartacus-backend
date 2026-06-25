@@ -167,6 +167,44 @@ class MedicalHistoryService:
             )
 
     @log
+    def list_pending_review(self, project_id: str) -> list:
+        """Return medical history docs with status=pending_approval for the project.
+
+        Enumerates project members via memberships (users is a global collection),
+        then reads each medical_history doc keyed {projectId}_{uid}.
+        """
+        from app.models.medical_history import PendingReviewItem
+
+        db = firestore.client()
+        items: list[PendingReviewItem] = []
+        memberships = (
+            db.collection("memberships").where("projectId", "==", project_id).stream()
+        )
+        seen: set[str] = set()
+        for m in memberships:
+            uid = m.to_dict().get("userId")
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            doc = db.collection(self._COLLECTION).document(f"{project_id}_{uid}").get()
+            if not doc.exists:
+                continue
+            d = doc.to_dict()
+            if d.get("status") != "pending_approval":
+                continue
+            user = db.collection(self._USERS).document(uid).get()
+            name = user.to_dict().get("name", "") if user.exists else ""
+            items.append(
+                PendingReviewItem(
+                    uid=uid,
+                    name=name,
+                    submitted_at=d.get("filledAt"),
+                )
+            )
+        items.sort(key=lambda i: i.submitted_at or "")
+        return items
+
+    @log
     def get_admin(
         self, project_id: str, user_id: str,
     ) -> MedicalHistoryOut:

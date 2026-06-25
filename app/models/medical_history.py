@@ -152,6 +152,21 @@ class MedicalHistoryReviewRequest(BaseModel):
         return self
 
 
+class PendingReviewItem(BaseModel):
+    """A user whose medical history is pending staff review."""
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    uid: str
+    name: str
+    submitted_at: Optional[str] = None
+
+
+class PendingReviewList(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    items: list[PendingReviewItem]
+
+
 class PendingAnamneseItem(BaseModel):
     """A user (self or dependent) that needs medical history filled."""
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
