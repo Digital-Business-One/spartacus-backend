@@ -16,7 +16,6 @@ from app.models.medical_history import (
     PendingAnamneseItem,
     SymptomsIn,
 )
-from app.services.account_service import AccountService
 
 
 class MedicalHistoryService:
@@ -62,15 +61,10 @@ class MedicalHistoryService:
             "filledBy": actor_uid,
             "reviewedAt": None,
             "reviewedBy": None,
+            "reviewNote": None,
         }
 
         db.collection(self._COLLECTION).document(doc_id).set(doc_data)
-
-        # Trigger state transition:
-        # waiting_medical_history → pending_medical_history_approval
-        _, event = AccountService().execute_transition(
-            project_id, user_id, "submit_medical_history", actor_uid
-        )
 
         out = MedicalHistoryOut(
             project_id=project_id,
@@ -84,9 +78,10 @@ class MedicalHistoryService:
             general_comments=data.general_comments,
             filled_at=now,
             filled_by=actor_uid,
+            review_note=None,
         )
 
-        return out, event
+        return out, None
 
     @log
     def list_pending(
@@ -139,6 +134,17 @@ class MedicalHistoryService:
 
         return items
 
+    def is_guardian_of(self, guardian_uid: str, target_uid: str) -> bool:
+        """Return True if guardian_uid is the registered guardian of target_uid."""
+        db = firestore.client()
+        target_doc = db.collection(self._USERS).document(target_uid).get()
+        if not target_doc.exists:
+            return False
+        target = target_doc.to_dict()
+        return bool(
+            target.get("isDependent") and target.get("guardianUid") == guardian_uid
+        )
+
     def _assert_guardian_of(
         self, guardian_uid: str, target_uid: str
     ) -> None:
@@ -161,6 +167,44 @@ class MedicalHistoryService:
             )
 
     @log
+    def list_pending_review(self, project_id: str) -> list:
+        """Return medical history docs with status=pending_approval for the project.
+
+        Enumerates project members via memberships (users is a global collection),
+        then reads each medical_history doc keyed {projectId}_{uid}.
+        """
+        from app.models.medical_history import PendingReviewItem
+
+        db = firestore.client()
+        items: list[PendingReviewItem] = []
+        memberships = (
+            db.collection("memberships").where("projectId", "==", project_id).stream()
+        )
+        seen: set[str] = set()
+        for m in memberships:
+            uid = m.to_dict().get("userId")
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            doc = db.collection(self._COLLECTION).document(f"{project_id}_{uid}").get()
+            if not doc.exists:
+                continue
+            d = doc.to_dict()
+            if d.get("status") != "pending_approval":
+                continue
+            user = db.collection(self._USERS).document(uid).get()
+            name = user.to_dict().get("name", "") if user.exists else ""
+            items.append(
+                PendingReviewItem(
+                    uid=uid,
+                    name=name,
+                    submitted_at=d.get("filledAt"),
+                )
+            )
+        items.sort(key=lambda i: i.submitted_at or "")
+        return items
+
+    @log
     def get_admin(
         self, project_id: str, user_id: str,
     ) -> MedicalHistoryOut:
@@ -171,6 +215,58 @@ class MedicalHistoryService:
         result = self.get(project_id, user_id)
         if result is None:
             raise LookupError("Anamnese não encontrada")
+        return result
+
+    @log
+    def review(
+        self,
+        project_id: str,
+        user_id: str,
+        action: str,
+        note: str,
+        reviewer_uid: str,
+    ) -> MedicalHistoryOut:
+        db = firestore.client()
+        doc_id = f"{project_id}_{user_id}"
+        ref = db.collection(self._COLLECTION).document(doc_id)
+        if not ref.get().exists:
+            raise LookupError("Anamnese não encontrada")
+
+        now = datetime.now(timezone.utc).isoformat()
+        new_status = "approved" if action == "approve" else "needs_revision"
+        ref.update(
+            {
+                "status": new_status,
+                "reviewedAt": now,
+                "reviewedBy": reviewer_uid,
+                "reviewNote": note or None,
+            }
+        )
+
+        # Audit trail on the account history
+        reviewer_doc = db.collection(self._USERS).document(reviewer_uid).get()
+        reviewer_name = (
+            reviewer_doc.to_dict().get("name", "") if reviewer_doc.exists else ""
+        )
+        from app.services.account_history_service import AccountHistoryService
+
+        AccountHistoryService().record(
+            uid=user_id,
+            project_id=project_id,
+            event_type="account",
+            event_subtype=f"anamnese_{action}",
+            actor_uid=reviewer_uid,
+            actor_name=reviewer_name,
+            actor_roles=[],
+            description=(
+                "Anamnese aprovada"
+                if action == "approve"
+                else f"Anamnese devolvida para revisão: {note}"
+            ),
+        )
+
+        result = self.get(project_id, user_id)
+        assert result is not None
         return result
 
     @log
@@ -208,4 +304,5 @@ class MedicalHistoryService:
             filled_by=d.get("filledBy"),
             reviewed_at=d.get("reviewedAt"),
             reviewed_by=d.get("reviewedBy"),
+            review_note=d.get("reviewNote"),
         )

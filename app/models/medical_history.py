@@ -136,6 +136,35 @@ class MedicalHistoryOut(BaseModel):
     filled_by: Optional[str] = None
     reviewed_at: Optional[str] = None
     reviewed_by: Optional[str] = None
+    review_note: Optional[str] = None
+
+
+class MedicalHistoryReviewRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    action: Literal["approve", "request_revision"]
+    note: str = ""
+
+    @model_validator(mode="after")
+    def note_required_on_revision(self) -> "MedicalHistoryReviewRequest":
+        if self.action == "request_revision" and not self.note.strip():
+            raise ValueError("Informe o motivo da revisão")
+        return self
+
+
+class PendingReviewItem(BaseModel):
+    """A user whose medical history is pending staff review."""
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    uid: str
+    name: str
+    submitted_at: Optional[str] = None
+
+
+class PendingReviewList(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    items: list[PendingReviewItem]
 
 
 class PendingAnamneseItem(BaseModel):
