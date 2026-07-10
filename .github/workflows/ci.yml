@@ -201,7 +201,7 @@ jobs:
             --image=${{ env.REGION }}-docker.pkg.dev/${{ env.IMAGE }}:${{ github.sha }} \
             --region=${{ env.REGION }} \
             --platform=managed \
-            --update-env-vars="^@^ROOT_PROJECT_ID=spartacus-artes-marciais@CORS_ORIGINS=https://app.spartacus.app.br,https://backoffice.spartacus.app.br,https://spartacus.app.br,https://spartacus-artes-marciais.web.app,https://spartacus-artes-marciais.firebaseapp.com" \
+            --update-env-vars="^@^ROOT_PROJECT_ID=spartacus-artes-marciais@CORS_ORIGINS=https://app.spartacus.app.br,https://backoffice.spartacus.app.br,https://spartacus.app.br,https://spartacus-artes-marciais.web.app,https://spartacus-artes-marciais.firebaseapp.com@APP_WEB_URL=https://app.spartacus.app.br" \
             --quiet
 
       # Guard against pinned-traffic: if traffic was ever pinned to a specific
