@@ -89,10 +89,34 @@ app.include_router(validation.router)
 app.include_router(jobs.router)
 
 # Firebase Admin SDK — uses Application Default Credentials on Cloud Run.
-# In local dev, uses FIREBASE_AUTH_EMULATOR_HOST if set.
+# Against the local Firebase emulators there are NO real credentials, so
+# firestore.client() → google.auth.default() would raise DefaultCredentialsError
+# (surfacing in the browser as a misleading "CORS error" on the 500). When an
+# emulator host is set, initialize with anonymous credentials + explicit project.
 # ValueError is raised when the app is already initialized (e.g. integration tests).
 try:
-    initialize_app()
+    _use_emulators = bool(
+        os.getenv("FIRESTORE_EMULATOR_HOST")
+        or os.getenv("FIREBASE_AUTH_EMULATOR_HOST")
+    )
+    if _use_emulators:
+        from firebase_admin import credentials as _fb_credentials
+        from google.auth.credentials import AnonymousCredentials
+
+        class _EmulatorCredential(_fb_credentials.Base):
+            def get_credential(self):
+                return AnonymousCredentials()
+
+        initialize_app(
+            credential=_EmulatorCredential(),
+            options={
+                "projectId": os.getenv(
+                    "GOOGLE_CLOUD_PROJECT", "spartacus-artes-marciais"
+                ),
+            },
+        )
+    else:
+        initialize_app()
 except ValueError:
     pass
 
