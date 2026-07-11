@@ -290,7 +290,8 @@ class TestPromoteBeyondMax:
 
 
 class TestStudentLock:
-    """profile_service.update_graduation: one-time insert, never overwrite."""
+    """profile_service.update_graduation: student may re-edit at any time; a
+    real change re-opens approval (status→pending); unchanged is preserved."""
 
     def test_first_insert_is_pending_and_locked(self):
         from app.models.profile import GraduationEntry, GraduationUpdate
@@ -304,24 +305,29 @@ class TestStudentLock:
 
         with patch("app.services.profile_service.firestore") as fs:
             fs.client.return_value = db
-            ProfileService().update_graduation(
+            changed = ProfileService().update_graduation(
                 uid="aluno-1", acting_as=None,
                 data=GraduationUpdate(graduation={
                     "Jiu-Jitsu": GraduationEntry(belt="azul", degree=0),
                 }),
             )
+        assert changed is True
         written = ref.update.call_args[0][0]["graduation"]
         # normalized key + pending + locked
         assert "jiu-jitsu" in written
         assert written["jiu-jitsu"]["status"] == "pending"
         assert written["jiu-jitsu"]["lockedByStudent"] is True
 
-    def test_existing_modality_not_overwritten(self):
+    def test_real_edit_overwrites_and_resets_to_pending(self):
+        """Editing an approved modality re-opens staff approval."""
         from app.models.profile import GraduationEntry, GraduationUpdate
         from app.services.profile_service import ProfileService
 
         snap = MagicMock(exists=True, to_dict=MagicMock(return_value={
-            "graduation": {"jiu-jitsu": {"belt": "preta", "degree": 0, "status": "approved"}},
+            "graduation": {"jiu-jitsu": {
+                "belt": "preta", "degree": 0, "status": "approved",
+                "gradedBy": "staff1", "gradedByName": "Prof", "gradedAt": "x",
+            }},
         }))
         ref = MagicMock()
         ref.get.return_value = snap
@@ -330,13 +336,41 @@ class TestStudentLock:
 
         with patch("app.services.profile_service.firestore") as fs:
             fs.client.return_value = db
-            ProfileService().update_graduation(
+            changed = ProfileService().update_graduation(
                 uid="aluno-1", acting_as=None,
                 data=GraduationUpdate(graduation={
                     "jiu-jitsu": GraduationEntry(belt="branca", degree=0),
                 }),
             )
-        # No new write OR write keeps the approved preta belt untouched
-        if ref.update.called:
-            written = ref.update.call_args[0][0]["graduation"]
-            assert written["jiu-jitsu"]["belt"] == "preta"
+        assert changed is True
+        written = ref.update.call_args[0][0]["graduation"]["jiu-jitsu"]
+        assert written["belt"] == "branca"        # overwritten
+        assert written["status"] == "pending"     # approval re-opened
+        assert written["gradedBy"] is None         # prior grading cleared
+
+    def test_unchanged_modality_is_preserved_and_no_write(self):
+        """Submitting values identical to stored is a no-op — status kept,
+        no Firestore write, changed=False (no phantom success)."""
+        from app.models.profile import GraduationEntry, GraduationUpdate
+        from app.services.profile_service import ProfileService
+
+        snap = MagicMock(exists=True, to_dict=MagicMock(return_value={
+            "graduation": {"jiu-jitsu": {
+                "belt": "azul", "degree": 2, "prajied": None, "status": "approved",
+            }},
+        }))
+        ref = MagicMock()
+        ref.get.return_value = snap
+        db = MagicMock()
+        db.collection.return_value.document.return_value = ref
+
+        with patch("app.services.profile_service.firestore") as fs:
+            fs.client.return_value = db
+            changed = ProfileService().update_graduation(
+                uid="aluno-1", acting_as=None,
+                data=GraduationUpdate(graduation={
+                    "jiu-jitsu": GraduationEntry(belt="azul", degree=2),
+                }),
+            )
+        assert changed is False
+        ref.update.assert_not_called()
