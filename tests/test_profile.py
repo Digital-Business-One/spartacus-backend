@@ -352,7 +352,7 @@ class TestListDependents:
 
 
 class TestUpdateGraduation:
-    def test_updates_graduation(self):
+    def test_persists_new_graduation_and_reports_changed(self):
         with (
             patch(_VERIFY, return_value=_VALID_CLAIMS,
             ),
@@ -371,6 +371,59 @@ class TestUpdateGraduation:
             )
 
         assert resp.status_code == 200
+        assert resp.json() == {"status": "updated", "changed": True}
+
+    def test_reports_unchanged_when_values_match_stored(self):
+        """Submitting values identical to stored is a real no-op — the
+        endpoint must report changed=False instead of a phantom success."""
+        existing = {
+            "jiu-jitsu": {
+                "belt": "blue", "degree": 2, "prajied": None,
+                "status": "approved", "lockedByStudent": True,
+            },
+        }
+        with (
+            patch(_VERIFY, return_value=_VALID_CLAIMS,
+            ),
+            patch(_FS) as mock_fs,
+        ):
+            mock_fs.client.return_value = _mock_firestore(
+                user_data=_user_doc({"graduation": existing}),
+            )
+            resp = client.patch(
+                "/users/me/graduation",
+                headers=_HEADERS,
+                json={"graduation": {"jiu-jitsu": {"belt": "blue", "degree": 2}}},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "unchanged", "changed": False}
+
+    def test_editing_approved_reports_changed(self):
+        """A real edit to an approved modality is a change (which the service
+        rewrites to status=pending), so the endpoint reports changed=True."""
+        existing = {
+            "jiu-jitsu": {
+                "belt": "blue", "degree": 2, "prajied": None,
+                "status": "approved", "lockedByStudent": True,
+            },
+        }
+        with (
+            patch(_VERIFY, return_value=_VALID_CLAIMS,
+            ),
+            patch(_FS) as mock_fs,
+        ):
+            mock_fs.client.return_value = _mock_firestore(
+                user_data=_user_doc({"graduation": existing}),
+            )
+            resp = client.patch(
+                "/users/me/graduation",
+                headers=_HEADERS,
+                json={"graduation": {"jiu-jitsu": {"belt": "purple", "degree": 0}}},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "updated", "changed": True}
 
 
 # ── PATCH /users/me/competition ──────────────────────────────────────────────

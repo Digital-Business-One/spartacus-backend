@@ -109,12 +109,13 @@ def update_graduation(
     x_acting_as: Optional[str] = Header(None),
 ) -> dict:
     ctx = auth_ctx.get()
-    ProfileService().update_graduation(
+    changed = ProfileService().update_graduation(
         uid=ctx.user_id,
         acting_as=x_acting_as,
         data=data,
     )
-    return {"status": "updated"}
+    # Report the real outcome so the client never claims a phantom success.
+    return {"status": "updated" if changed else "unchanged", "changed": changed}
 
 
 @log

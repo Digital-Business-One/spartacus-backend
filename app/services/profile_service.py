@@ -378,13 +378,18 @@ class ProfileService:
         uid: str,
         acting_as: str | None,
         data: GraduationUpdate,
-    ) -> None:
-        """Student's one-time graduation insert.
+    ) -> bool:
+        """Student self-service graduation edit.
 
-        Keyed by modality slug (normalized). Each modality can be inserted
-        once by the student; existing entries are never overwritten here
-        (only staff change them via the graduations dashboard). New entries
-        come in as status="pending", awaiting staff approval.
+        Keyed by modality slug (normalized). The student may edit any
+        modality at any time. Any *real* change (belt, degree or prajied
+        differs from what is stored) rewrites that modality with
+        status="pending", re-opening staff approval and clearing the prior
+        grading. Modalities whose submitted values match what is stored are
+        left untouched, preserving their current status.
+
+        Returns True iff something was actually persisted — the caller uses
+        this to report the real outcome instead of always claiming success.
         """
         target_uid = acting_as or uid
         if acting_as:
@@ -400,28 +405,36 @@ class ProfileService:
         # Normalize any legacy keys (modality name) → slug, in place.
         stored = {_modality_slug(k): v for k, v in stored.items()}
 
-        added = False
+        changed = False
         for raw_key, entry in data.graduation.items():
             slug = _modality_slug(raw_key)
-            existing = stored.get(slug)
-            # Locked once inserted, EXCEPT when staff rejected it — then the
-            # student may edit and resubmit until it is approved.
-            if existing and existing.get("status") != "rejected":
+            existing = stored.get(slug) or {}
+            new_degree = entry.degree or 0
+            # Skip entries whose values are identical to what is stored, so
+            # submitting the full graduation object doesn't reset untouched
+            # (e.g. already-approved) modalities back to pending.
+            if (
+                existing
+                and existing.get("belt") == entry.belt
+                and (existing.get("degree") or 0) == new_degree
+                and existing.get("prajied") == entry.prajied
+            ):
                 continue
             stored[slug] = {
                 "belt": entry.belt,
-                "degree": entry.degree or 0,
+                "degree": new_degree,
                 "prajied": entry.prajied,
-                "status": "pending",
+                "status": "pending",  # any real edit re-opens staff approval
                 "lockedByStudent": True,
                 "gradedBy": None,
                 "gradedByName": None,
                 "gradedAt": None,
             }
-            added = True
+            changed = True
 
-        if added:
+        if changed:
             ref.update({"graduation": stored})
+        return changed
 
     # ── Competition ──────────────────────────────────────────────────────
 
