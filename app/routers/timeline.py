@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.logging.decorator import log
+from app.models.comment import CommentCreate, CommentOut, CommentsPage, MentionableOut
 from app.models.timeline import (
     LikesResponse,
     LikeUser,
@@ -87,3 +88,51 @@ def pin_entry(entry_id: str) -> PinResponse:
 def get_link_preview(url: str = Query(...)) -> LinkPreviewResponse:
     result = LinkPreviewService().fetch(url)
     return LinkPreviewResponse(**result)
+
+
+@log
+@router.get("/{entry_id}/comments")
+def list_comments(entry_id: str) -> CommentsPage:
+    ctx = auth_ctx.get()
+    try:
+        return TimelineService().list_comments(entry_id, ctx)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@log
+@router.post("/{entry_id}/comments", status_code=201)
+def create_comment(entry_id: str, data: CommentCreate) -> CommentOut:
+    ctx = auth_ctx.get()
+    try:
+        return TimelineService().add_comment(entry_id, ctx, data)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@log
+@router.delete("/{entry_id}/comments/{comment_id}", status_code=204)
+def delete_comment(entry_id: str, comment_id: str):
+    ctx = auth_ctx.get()
+    try:
+        TimelineService().delete_comment(entry_id, comment_id, ctx)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@log
+@router.get("/{entry_id}/mentionable")
+def list_mentionable(entry_id: str, q: str = "") -> list[MentionableOut]:
+    ctx = auth_ctx.get()
+    try:
+        return TimelineService().list_mentionable(entry_id, ctx, q)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))

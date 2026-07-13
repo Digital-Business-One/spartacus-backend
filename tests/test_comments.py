@@ -3,12 +3,26 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.models.comment import CommentCreate
 from app.security.context import AuthContext
 from app.services.timeline_service import TimelineService
 
+with patch("firebase_admin.initialize_app"):
+    from app.main import app
+
+client = TestClient(app, raise_server_exceptions=False)
+
 _FS = "app.services.timeline_service.firestore"
+_VERIFY = "app.security.middleware.verify_id_token"
+_PROJECT_ID = "spartacus-artes-marciais"
+_VALID_CLAIMS = {
+    "uid": "u1",
+    "email": "u1@test.com",
+    "projects": {_PROJECT_ID: ["student"]},
+}
+_HEADERS = {"Authorization": "Bearer valid-token", "X-Project-Id": _PROJECT_ID}
 
 
 def _ctx(uid="u1", roles=None):
@@ -246,3 +260,126 @@ class TestMentionable:
             res = TimelineService().list_mentionable("e1", _ctx("u1"))
         assert [m.uid for m in res] == ["adult2", "adult1"]
         assert res[1].initials == "MA"
+
+
+class TestCommentRoutes:
+    """TestClient-level tests for the REST endpoints (Task 5)."""
+
+    def test_post_comment_201(self):
+        entry = _entry()
+        db, *_ = _mock_db(entry)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            r = client.post(
+                "/timeline/e1/comments", headers=_HEADERS, json={"text": "Olá!"}
+            )
+        assert r.status_code == 201
+        assert r.json()["text"] == "Olá!"
+
+    def test_post_outsider_403(self):
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, *_ = _mock_db(entry)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.post(
+                "/timeline/e1/comments", headers=_HEADERS, json={"text": "x"}
+            )
+        assert r.status_code == 403
+
+    def test_post_missing_entry_404(self):
+        db, *_ = _mock_db(None)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.post(
+                "/timeline/e1/comments", headers=_HEADERS, json={"text": "x"}
+            )
+        assert r.status_code == 404
+
+    def test_list_comments_200(self):
+        entry = _entry()
+        db, entry_ref, comments = _mock_db(entry)
+        c1 = MagicMock()
+        c1.id = "c1"
+        c1.to_dict.return_value = {
+            "authorUid": "u1",
+            "authorName": "A",
+            "authorPhotoUrl": None,
+            "text": "hi",
+            "parentId": None,
+            "mentions": [],
+            "createdAt": "2026-07-13T00:00:00+00:00",
+            "deleted": False,
+            "deletedBy": None,
+        }
+        q = MagicMock()
+        q.stream.return_value = [c1]
+        comments.order_by.return_value.limit.return_value = q
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.get("/timeline/e1/comments", headers=_HEADERS)
+        assert r.status_code == 200
+        assert len(r.json()["items"]) == 1
+
+    def test_delete_comment_204(self):
+        entry = _entry()
+        db, entry_ref, comments = _mock_db(entry)
+        cref = MagicMock()
+        csnap = MagicMock(exists=True)
+        csnap.to_dict.return_value = {"authorUid": "u1", "deleted": False}
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="DEC")
+            r = client.delete("/timeline/e1/comments/c1", headers=_HEADERS)
+        assert r.status_code == 204
+
+    def test_delete_comment_stranger_403(self):
+        entry = _entry()
+        db, entry_ref, comments = _mock_db(entry)
+        cref = MagicMock()
+        csnap = MagicMock(exists=True)
+        csnap.to_dict.return_value = {"authorUid": "someone_else", "deleted": False}
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.delete("/timeline/e1/comments/c1", headers=_HEADERS)
+        assert r.status_code == 403
+
+    def test_delete_comment_missing_404(self):
+        entry = _entry()
+        db, entry_ref, comments = _mock_db(entry)
+        cref = MagicMock()
+        csnap = MagicMock(exists=False)
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.delete("/timeline/e1/comments/c1", headers=_HEADERS)
+        assert r.status_code == 404
+
+    def test_list_mentionable_200(self):
+        entry = _entry()
+        db, *_ = _mock_db(entry)
+        members = [
+            {"uid": "adult1", "name": "Maratona JJ", "nickname": "Maratona",
+             "birthDate": "01/01/1990", "photoUrl": None},
+        ]
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs, \
+             patch.object(TimelineService, "_project_member_docs",
+                          return_value=members):
+            fs.client.return_value = db
+            r = client.get(
+                "/timeline/e1/mentionable", headers=_HEADERS, params={"q": "mar"}
+            )
+        assert r.status_code == 200
+        assert [m["uid"] for m in r.json()] == ["adult1"]
+
+    def test_list_mentionable_missing_entry_404(self):
+        db, *_ = _mock_db(None)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.get("/timeline/e1/mentionable", headers=_HEADERS)
+        assert r.status_code == 404
