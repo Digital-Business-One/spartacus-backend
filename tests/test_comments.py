@@ -191,3 +191,58 @@ class TestListDelete:
             fs.client.return_value = db
             with pytest.raises(PermissionError):
                 TimelineService().list_comments("e1", _ctx("stranger"))
+
+
+class TestMentionable:
+    def _members(self):
+        # (uid, name, nickname, birthDate, photoUrl)
+        return [
+            {"uid": "adult1", "name": "Maratona JJ", "nickname": "Maratona",
+             "birthDate": "01/01/1990", "photoUrl": None},
+            {"uid": "minor1", "name": "Pedro Kid", "nickname": None,
+             "birthDate": "01/01/2015", "photoUrl": None},
+        ]
+
+    def test_only_adults_returned_and_ordered(self):
+        entry = _entry()
+        db, entry_ref, _ = _mock_db(entry)
+        # membership query → uids; users batch → docs
+        with patch(_FS) as fs, \
+             patch.object(TimelineService, "_project_member_docs",
+                          return_value=self._members()):
+            fs.client.return_value = db
+            res = TimelineService().list_mentionable("e1", _ctx("u1"), q="mar")
+        assert [m.uid for m in res] == ["adult1"]     # minor excluído
+        assert res[0].display == "Maratona"           # apelido tem prioridade
+        assert res[0].subtitle == "Maratona JJ"
+        assert res[0].initials == "MA"
+
+    def test_missing_entry_raises_lookup(self):
+        db, *_ = _mock_db(None)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(LookupError):
+                TimelineService().list_mentionable("e1", _ctx("u1"))
+
+    def test_blocked_entry_raises_permission(self):
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, *_ = _mock_db(entry)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().list_mentionable("e1", _ctx("stranger"))
+
+    def test_no_query_returns_all_adults_sorted(self):
+        entry = _entry()
+        db, *_ = _mock_db(entry)
+        members = self._members() + [
+            {"uid": "adult2", "name": "Ana Silva", "nickname": None,
+             "birthDate": "01/01/1980", "photoUrl": None},
+        ]
+        with patch(_FS) as fs, \
+             patch.object(TimelineService, "_project_member_docs",
+                          return_value=members):
+            fs.client.return_value = db
+            res = TimelineService().list_mentionable("e1", _ctx("u1"))
+        assert [m.uid for m in res] == ["adult2", "adult1"]
+        assert res[1].initials == "MA"

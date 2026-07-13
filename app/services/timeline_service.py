@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 
 from firebase_admin import firestore
 
+from app.domain.age import is_adult
 from app.domain.enums import STAFF_ROLES, TimelineVisibility
 from app.logging.decorator import log
-from app.models.comment import CommentOut, CommentsPage
+from app.models.comment import CommentOut, CommentsPage, MentionableOut
 from app.models.timeline import TimelineEntryOut
 from app.security.context import AuthContext
 
@@ -374,6 +375,77 @@ class TimelineService:
             "deletedAt": datetime.now(timezone.utc).isoformat(),
         })
         entry_ref.update({"commentsCount": firestore.Increment(-1)})
+
+    def _project_member_docs(self, project_id: str) -> list[dict]:
+        """UIDs+dados dos membros do projeto (para o autocomplete). Lê
+        memberships ativas → users. Retorna dicts
+        {uid,name,nickname,birthDate,photoUrl}."""
+        db = firestore.client()
+        mships = (
+            db.collection("memberships")
+            .where("projectId", "==", project_id)
+            .where("status", "==", "active")
+            .stream()
+        )
+        uids = [m.to_dict()["userId"] for m in mships]
+        out = []
+        for uid in uids:
+            u = db.collection("users").document(uid).get()
+            if not u.exists:
+                continue
+            d = u.to_dict()
+            out.append({
+                "uid": uid,
+                "name": d.get("name", ""),
+                "nickname": d.get("nickname"),
+                "birthDate": d.get("birthDate"),
+                "photoUrl": d.get("photoUrl"),
+            })
+        return out
+
+    @log
+    def list_mentionable(
+        self, entry_id: str, ctx: AuthContext, q: str = ""
+    ) -> list[MentionableOut]:
+        """Autocomplete de `@`-mention: membros adultos que podem ver o card.
+
+        Menores nunca são mencionáveis (child safety), mesmo que sejam
+        membros visíveis do card — filtrados via ``is_adult``.
+        """
+        db = firestore.client()
+        snap = db.collection(self._COLLECTION).document(entry_id).get()
+        if not snap.exists:
+            raise LookupError("Timeline entry não encontrada")
+        entry = snap.to_dict()
+        if not self.can_view_entry(entry, ctx):
+            raise PermissionError("Sem acesso a este card")
+
+        ql = q.strip().lower()
+        results: list[MentionableOut] = []
+        for m in self._project_member_docs(ctx.project_id):
+            if not is_adult(m.get("birthDate")):
+                continue  # menor: nunca mencionável
+            nick = (m.get("nickname") or "").strip()
+            name = (m.get("name") or "").strip()
+            display = nick or name
+            if ql and ql not in display.lower() and ql not in name.lower():
+                continue
+            words = display.split()
+            if len(words) >= 2:
+                initials = (words[0][0] + words[1][0]).upper()
+            elif len(words) == 1:
+                initials = words[0][:2].upper()
+            else:
+                initials = "?"
+            results.append(MentionableOut(
+                uid=m["uid"],
+                display=display,
+                subtitle=name if nick else None,
+                photo_url=m.get("photoUrl"),
+                initials=initials,
+            ))
+        results.sort(key=lambda x: x.display.lower())
+        return results
 
     def _get_dependents(
         self, db, user_id: str, project_id: str
