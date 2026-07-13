@@ -1,11 +1,17 @@
 """TimelineService — feed with visibility filtering (RFC-11)."""
 
+from datetime import datetime, timezone
+
 from firebase_admin import firestore
 
 from app.domain.enums import STAFF_ROLES, TimelineVisibility
 from app.logging.decorator import log
+from app.models.comment import CommentOut, CommentsPage
 from app.models.timeline import TimelineEntryOut
 from app.security.context import AuthContext
+
+# Alias kept for parity with the RFC-11 task brief naming.
+_STAFF_ROLES = STAFF_ROLES
 
 
 class TimelineService:
@@ -260,6 +266,114 @@ class TimelineService:
         # Sort by name for a stable UI
         result.sort(key=lambda u: u["name"].lower())
         return result
+
+    def _is_staff(self, ctx: AuthContext) -> bool:
+        return bool(_STAFF_ROLES & set(ctx.roles))
+
+    def can_view_entry(self, entry: dict, ctx: AuthContext) -> bool:
+        """Reuse the feed visibility rule (RFC-11) for a single entry."""
+        db = firestore.client()
+        is_staff = self._is_staff(ctx)
+        dependents = (
+            [] if is_staff else self._get_dependents(db, ctx.user_id, ctx.project_id)
+        )
+        return self._is_visible(entry, ctx.user_id, dependents, is_staff)
+
+    @log
+    def add_comment(self, entry_id: str, ctx: AuthContext, data) -> CommentOut:
+        db = firestore.client()
+        entry_ref = db.collection(self._COLLECTION).document(entry_id)
+        snap = entry_ref.get()
+        if not snap.exists:
+            raise LookupError("Timeline entry não encontrada")
+        entry = snap.to_dict()
+        if not self.can_view_entry(entry, ctx):
+            raise PermissionError("Sem acesso a este card")
+
+        author = db.collection("users").document(ctx.user_id).get().to_dict() or {}
+        now = datetime.now(timezone.utc).isoformat()
+        doc = {
+            "authorUid": ctx.user_id,
+            "authorName": author.get("name", ""),
+            "authorPhotoUrl": author.get("photoUrl"),
+            "text": data.text.strip(),
+            "parentId": data.parent_id,
+            "mentions": data.mentions,
+            "createdAt": now,
+            "deleted": False,
+            "deletedBy": None,
+            "deletedAt": None,
+        }
+        _, ref = entry_ref.collection("comments").add(doc)
+        entry_ref.update({"commentsCount": firestore.Increment(1)})
+        return CommentOut(
+            id=ref.id,
+            author_uid=doc["authorUid"],
+            author_name=doc["authorName"],
+            author_photo_url=doc["authorPhotoUrl"],
+            text=doc["text"],
+            parent_id=doc["parentId"],
+            mentions=doc["mentions"],
+            created_at=now,
+            deleted=False,
+            deleted_by=None,
+        )
+
+    @log
+    def list_comments(
+        self,
+        entry_id: str,
+        ctx: AuthContext,
+        cursor: str | None = None,
+        limit: int = 30,
+    ) -> CommentsPage:
+        db = firestore.client()
+        entry_ref = db.collection(self._COLLECTION).document(entry_id)
+        snap = entry_ref.get()
+        if not snap.exists:
+            raise LookupError("Timeline entry não encontrada")
+        if not self.can_view_entry(snap.to_dict(), ctx):
+            raise PermissionError("Sem acesso a este card")
+
+        query = entry_ref.collection("comments").order_by("createdAt").limit(limit)
+        docs = list(query.stream())
+        items = [
+            CommentOut(
+                id=doc.id,
+                author_uid=c["authorUid"],
+                author_name=c["authorName"],
+                author_photo_url=c.get("authorPhotoUrl"),
+                text="" if c.get("deleted") else c["text"],
+                parent_id=c.get("parentId"),
+                mentions=c.get("mentions", []),
+                created_at=c["createdAt"],
+                deleted=c.get("deleted", False),
+                deleted_by=c.get("deletedBy"),
+            )
+            for doc in docs
+            for c in [doc.to_dict()]
+        ]
+        return CommentsPage(items=items, next_cursor=None)
+
+    @log
+    def delete_comment(self, entry_id: str, comment_id: str, ctx: AuthContext) -> None:
+        db = firestore.client()
+        entry_ref = db.collection(self._COLLECTION).document(entry_id)
+        comment_ref = entry_ref.collection("comments").document(comment_id)
+        comment_snap = comment_ref.get()
+        if not comment_snap.exists:
+            raise LookupError("Comentário não encontrado")
+        comment = comment_snap.to_dict()
+        if comment.get("deleted"):
+            return
+        if comment["authorUid"] != ctx.user_id and not self._is_staff(ctx):
+            raise PermissionError("Só o autor ou a equipe podem remover")
+        comment_ref.update({
+            "deleted": True,
+            "deletedBy": ctx.user_id,
+            "deletedAt": datetime.now(timezone.utc).isoformat(),
+        })
+        entry_ref.update({"commentsCount": firestore.Increment(-1)})
 
     def _get_dependents(
         self, db, user_id: str, project_id: str
