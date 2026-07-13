@@ -140,3 +140,54 @@ class TestListDelete:
             TimelineService().delete_comment("e1", "c1", _ctx("staff", ["teacher"]))
         cref.update.assert_called_once()
         assert cref.update.call_args[0][0]["deleted"] is True
+        # Safety-critical: successful staff soft-delete must decrement the
+        # entry's denormalized commentsCount counter.
+        entry_ref.update.assert_called_with({"commentsCount": "DEC"})
+
+    def test_delete_by_stranger_raises_permission(self):
+        """A non-author, non-staff user must not be able to delete a comment."""
+        entry = _entry()
+        db, entry_ref, comments = _mock_db(entry)
+        cref = MagicMock()
+        csnap = MagicMock(exists=True)
+        csnap.to_dict.return_value = {"authorUid": "someone_else", "deleted": False}
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().delete_comment("e1", "c1", _ctx("stranger"))
+
+    def test_delete_already_deleted_is_noop(self):
+        """Deleting an already-deleted comment must be a silent no-op."""
+        entry = _entry()
+        db, entry_ref, comments = _mock_db(entry)
+        cref = MagicMock()
+        csnap = MagicMock(exists=True)
+        csnap.to_dict.return_value = {"authorUid": "someone", "deleted": True}
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            TimelineService().delete_comment("e1", "c1", _ctx("staff", ["teacher"]))
+        cref.update.assert_not_called()
+
+    def test_delete_missing_comment_raises_lookup(self):
+        entry = _entry()
+        db, entry_ref, comments = _mock_db(entry)
+        cref = MagicMock()
+        csnap = MagicMock(exists=False)
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(LookupError):
+                TimelineService().delete_comment("e1", "c1", _ctx())
+
+    def test_list_on_blocked_entry_raises_permission(self):
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, *_ = _mock_db(entry)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().list_comments("e1", _ctx("stranger"))
