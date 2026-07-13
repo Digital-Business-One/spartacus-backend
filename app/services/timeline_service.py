@@ -6,10 +6,18 @@ from firebase_admin import firestore
 
 from app.domain.age import is_adult
 from app.domain.enums import STAFF_ROLES, TimelineVisibility
+from app.events import publisher
+from app.events.models import AccountNotificationPayload, DomainEvent
 from app.logging.decorator import log
 from app.models.comment import CommentOut, CommentsPage, MentionableOut
 from app.models.timeline import TimelineEntryOut
 from app.security.context import AuthContext
+
+_COMMENT_NOTIFICATION_TITLES = {
+    "comment.mention": "Você foi mencionado",
+    "comment.reply": "Responderam você",
+    "comment.on_card": "Novo comentário",
+}
 
 # Alias kept for parity with the RFC-11 task brief naming.
 _STAFF_ROLES = STAFF_ROLES
@@ -307,6 +315,9 @@ class TimelineService:
         }
         _, ref = entry_ref.collection("comments").add(doc)
         entry_ref.update({"commentsCount": firestore.Increment(1)})
+
+        self._notify_comment(db, ctx, entry, entry_ref, data, doc)
+
         return CommentOut(
             id=ref.id,
             author_uid=doc["authorUid"],
@@ -319,6 +330,52 @@ class TimelineService:
             deleted=False,
             deleted_by=None,
         )
+
+    def _notify_comment(
+        self, db, ctx: AuthContext, entry: dict, entry_ref, data, doc: dict
+    ) -> None:
+        """Best-effort notifications for a new comment.
+
+        Notifies (at most once each, never the commenter): the card owner,
+        the author of the parent comment (on a reply), and any mentioned
+        users. When a recipient qualifies for more than one reason, the
+        mention label takes priority — mentions are resolved last so they
+        overwrite any earlier owner/reply entry for the same uid.
+        """
+        author_name = doc["authorName"] or "Alguém"
+
+        recipients: dict[str, str] = {}  # uid → event_id (dedup, 1 push/pessoa)
+
+        owner = entry.get("targetUid") or entry.get("authorUid")
+        if owner and owner != ctx.user_id:
+            recipients[owner] = "comment.on_card"
+
+        if data.parent_id:
+            parent = entry_ref.collection("comments").document(data.parent_id).get()
+            if parent.exists:
+                parent_author = (parent.to_dict() or {}).get("authorUid")
+                if parent_author and parent_author != ctx.user_id:
+                    recipients[parent_author] = "comment.reply"
+
+        for mentioned_uid in data.mentions:
+            if mentioned_uid and mentioned_uid != ctx.user_id:
+                recipients[mentioned_uid] = "comment.mention"
+
+        for uid, event_id in recipients.items():
+            recipient = db.collection("users").document(uid).get().to_dict() or {}
+            publisher.publish(
+                DomainEvent(
+                    id=event_id,
+                    payload=AccountNotificationPayload(
+                        to=recipient.get("email", ""),
+                        name=recipient.get("name", ""),
+                        title=_COMMENT_NOTIFICATION_TITLES[event_id],
+                        message=f"{author_name}: {doc['text'][:80]}",
+                    ),
+                ),
+                project_id=ctx.project_id,
+                source="timeline_comment",
+            )
 
     @log
     def list_comments(

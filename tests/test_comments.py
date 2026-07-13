@@ -45,7 +45,7 @@ def _entry(**over):
     return base
 
 
-def _mock_db(entry, comment_docs=None, user_doc=None):
+def _mock_db(entry, comment_docs=None, user_doc=None, parent_doc=None, users_map=None):
     db = MagicMock()
     entry_ref = MagicMock()
     entry_snap = MagicMock(exists=bool(entry))
@@ -57,22 +57,32 @@ def _mock_db(entry, comment_docs=None, user_doc=None):
     added_ref = MagicMock()
     added_ref.id = "c-new"
     comments_col.add.return_value = (None, added_ref)
-    comments_col.document.return_value = MagicMock()
+    # parent-comment lookup (reply notifications) — defaults to "not found"
+    parent_ref = MagicMock()
+    parent_snap = MagicMock(exists=parent_doc is not None)
+    parent_snap.to_dict.return_value = parent_doc or {}
+    parent_ref.get.return_value = parent_snap
+    comments_col.document.return_value = parent_ref
     # entries collection
     entries_col = MagicMock()
     entries_col.document.return_value = entry_ref
-    # users collection (author lookup)
-    users_col = MagicMock()
-    u_ref = MagicMock()
-    u_snap = MagicMock(exists=True)
-    u_snap.to_dict.return_value = user_doc or {
+    # users collection (author lookup + per-recipient notification lookup)
+    default_user = user_doc or {
         "name": "Autor",
         "nickname": None,
         "photoUrl": None,
         "birthDate": "01/01/1990",
     }
-    u_ref.get.return_value = u_snap
-    users_col.document.return_value = u_ref
+
+    def user_document(uid):
+        ref = MagicMock()
+        snap = MagicMock(exists=True)
+        snap.to_dict.return_value = (users_map or {}).get(uid, default_user)
+        ref.get.return_value = snap
+        return ref
+
+    users_col = MagicMock()
+    users_col.document.side_effect = user_document
 
     def coll(name):
         return {"timeline_entries": entries_col, "users": users_col}.get(
@@ -260,6 +270,94 @@ class TestMentionable:
             res = TimelineService().list_mentionable("e1", _ctx("u1"))
         assert [m.uid for m in res] == ["adult2", "adult1"]
         assert res[1].initials == "MA"
+
+
+class TestCommentNotifications:
+    def test_mention_and_owner_events_published(self):
+        entry = _entry(authorUid="owner1", targetUid=None)
+        db, entry_ref, comments = _mock_db(entry)
+        published = []
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher") as pub:
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            pub.publish.side_effect = lambda ev, **k: published.append(ev.id)
+            TimelineService().add_comment(
+                "e1", _ctx("commenter"),
+                CommentCreate(text="oi @a", mentions=["adult1"]))
+        assert "comment.mention" in published
+        assert "comment.on_card" in published   # dono do card (owner1) != autor
+
+    def test_reply_notifies_parent_comment_author(self):
+        entry = _entry(authorUid="commenter")  # commenter is also card owner
+        db, entry_ref, comments = _mock_db(
+            entry, parent_doc={"authorUid": "parentAuthor"}
+        )
+        published = []
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher") as pub:
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            pub.publish.side_effect = lambda ev, **k: published.append(ev.id)
+            TimelineService().add_comment(
+                "e1", _ctx("commenter"),
+                CommentCreate(text="valeu!", parent_id="c-parent"))
+        # card owner == commenter → no comment.on_card; only the reply event
+        assert published == ["comment.reply"]
+
+    def test_commenter_never_notifies_self(self):
+        entry = _entry(authorUid="commenter", targetUid=None)
+        db, entry_ref, comments = _mock_db(entry)
+        published = []
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher") as pub:
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            pub.publish.side_effect = lambda ev, **k: published.append(ev.id)
+            TimelineService().add_comment(
+                "e1", _ctx("commenter"),
+                CommentCreate(text="oi", mentions=["commenter"]))
+        assert published == []
+
+    def test_dedup_prefers_mention_label_when_owner_also_mentioned(self):
+        entry = _entry(authorUid="owner1", targetUid=None)
+        db, entry_ref, comments = _mock_db(entry)
+        published = []
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher") as pub:
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            pub.publish.side_effect = lambda ev, **k: published.append(ev.id)
+            TimelineService().add_comment(
+                "e1", _ctx("commenter"),
+                CommentCreate(text="oi @owner", mentions=["owner1"]))
+        # owner1 qualifies both as card owner and as mentioned — one push,
+        # mention label wins.
+        assert published == ["comment.mention"]
+
+    def test_notification_uses_recipient_email_and_author_name(self):
+        entry = _entry(authorUid="owner1", targetUid=None)
+        db, entry_ref, comments = _mock_db(
+            entry,
+            user_doc={"name": "Comentarista", "photoUrl": None,
+                      "birthDate": "01/01/1990", "nickname": None},
+            users_map={"owner1": {"name": "Dono", "email": "dono@test.com"}},
+        )
+        published_payloads = []
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher") as pub:
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            pub.publish.side_effect = (
+                lambda ev, **k: published_payloads.append(ev.payload)
+            )
+            TimelineService().add_comment(
+                "e1", _ctx("commenter"), CommentCreate(text="oi"))
+        assert len(published_payloads) == 1
+        payload = published_payloads[0]
+        assert payload.to == "dono@test.com"
+        assert payload.name == "Dono"
+        assert payload.message == "Comentarista: oi"
 
 
 class TestCommentRoutes:
