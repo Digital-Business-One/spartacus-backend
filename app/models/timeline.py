@@ -40,6 +40,7 @@ class TimelineEntryOut(BaseModel):
     review_resolved: bool = False
 
     likes_count: int = 0
+    comments_count: int = 0
     user_liked: bool = False  # resolved per-request
     is_pinned: bool = False  # resolved per-request (project-level pin)
 

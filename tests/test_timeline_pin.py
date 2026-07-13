@@ -86,3 +86,37 @@ def test_pin_other_project_entry_raises():
         fs.client.return_value = db
         with pytest.raises(LookupError):
             TimelineService().toggle_pin("spartacus", "post_1")
+
+
+def test_to_out_carries_comments_count():
+    """Mirrors likesCount handling: commentsCount must flow into _to_out."""
+    entry = {
+        "id": "post_1",
+        "projectId": "spartacus",
+        "type": "post",
+        "origin": "manual",
+        "visibility": "public",
+        "authorUid": "u1",
+        "authorName": "Author",
+        "likesCount": 3,
+        "commentsCount": 5,
+        "createdAt": "2026-01-01T00:00:00Z",
+    }
+    out = TimelineService()._to_out(entry)
+    assert out.likes_count == 3
+    assert out.comments_count == 5
+
+
+def test_to_out_defaults_comments_count_to_zero():
+    entry = {
+        "id": "post_2",
+        "projectId": "spartacus",
+        "type": "post",
+        "origin": "manual",
+        "visibility": "public",
+        "authorUid": "u1",
+        "authorName": "Author",
+        "createdAt": "2026-01-01T00:00:00Z",
+    }
+    out = TimelineService()._to_out(entry)
+    assert out.comments_count == 0

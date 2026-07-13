@@ -593,6 +593,7 @@ class TimelineService:
             review_requested=entry.get("reviewRequested", False),
             review_resolved=entry.get("reviewResolved", False),
             likes_count=entry.get("likesCount", 0),
+            comments_count=entry.get("commentsCount", 0),
             user_liked=entry.get("userLiked", False),
             is_pinned=entry.get("isPinned", False),
             turma_name=entry.get("turmaName"),
