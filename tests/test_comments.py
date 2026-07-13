@@ -359,6 +359,54 @@ class TestCommentNotifications:
         assert payload.name == "Dono"
         assert payload.message == "Comentarista: oi"
 
+    def test_notification_failure_never_breaks_comment_creation(self):
+        """Task 6 fix: a Firestore error inside _notify_comment (the
+        per-recipient user lookup) must be swallowed — the comment write and
+        commentsCount increment already happened and must not be undone or
+        surfaced as a hard error to the caller.
+
+        The author lookup (uid="commenter", ~line 302 of add_comment, BEFORE
+        the comment is persisted) succeeds normally; only the recipient
+        lookup inside _notify_comment (uid="owner1", the card owner) raises.
+        """
+        entry = _entry(authorUid="owner1", targetUid=None)
+        db, entry_ref, comments = _mock_db(entry)
+
+        author_snap = MagicMock(exists=True)
+        author_snap.to_dict.return_value = {"name": "Comentarista", "photoUrl": None}
+
+        def users_document(uid):
+            if uid == "commenter":
+                ref = MagicMock()
+                ref.get.return_value = author_snap
+                return ref
+            raise RuntimeError("boom: transient Firestore error")
+
+        entries_col = MagicMock()
+        entries_col.document.return_value = entry_ref
+        users_col = MagicMock()
+        users_col.document.side_effect = users_document
+
+        def coll(name):
+            return {"timeline_entries": entries_col, "users": users_col}.get(
+                name, MagicMock()
+            )
+
+        db.collection.side_effect = coll
+
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher") as pub:
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            out = TimelineService().add_comment(
+                "e1", _ctx("commenter"), CommentCreate(text="oi")
+            )
+        assert out.text == "oi"
+        assert out.id == "c-new"
+        comments.add.assert_called_once()
+        entry_ref.update.assert_called_with({"commentsCount": "INC"})
+        pub.publish.assert_not_called()
+
 
 class TestCommentRoutes:
     """TestClient-level tests for the REST endpoints (Task 5)."""

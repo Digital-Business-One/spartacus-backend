@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 
+import structlog
 from firebase_admin import firestore
 
 from app.domain.age import is_adult
@@ -12,6 +13,8 @@ from app.logging.decorator import log
 from app.models.comment import CommentOut, CommentsPage, MentionableOut
 from app.models.timeline import TimelineEntryOut
 from app.security.context import AuthContext
+
+logger = structlog.get_logger()
 
 _COMMENT_NOTIFICATION_TITLES = {
     "comment.mention": "Você foi mencionado",
@@ -341,41 +344,60 @@ class TimelineService:
         users. When a recipient qualifies for more than one reason, the
         mention label takes priority — mentions are resolved last so they
         overwrite any earlier owner/reply entry for the same uid.
+
+        The comment doc + commentsCount increment are already durably
+        persisted by the time this runs (called unguarded from
+        add_comment), so nothing here — Firestore reads included — may ever
+        propagate an exception back to the caller. Any failure is logged
+        and swallowed.
         """
-        author_name = doc["authorName"] or "Alguém"
+        try:
+            author_name = doc["authorName"] or "Alguém"
 
-        recipients: dict[str, str] = {}  # uid → event_id (dedup, 1 push/pessoa)
+            recipients: dict[str, str] = {}  # uid → event_id (dedup, 1 push/pessoa)
 
-        owner = entry.get("targetUid") or entry.get("authorUid")
-        if owner and owner != ctx.user_id:
-            recipients[owner] = "comment.on_card"
+            owner = entry.get("targetUid") or entry.get("authorUid")
+            if owner and owner != ctx.user_id:
+                recipients[owner] = "comment.on_card"
 
-        if data.parent_id:
-            parent = entry_ref.collection("comments").document(data.parent_id).get()
-            if parent.exists:
-                parent_author = (parent.to_dict() or {}).get("authorUid")
-                if parent_author and parent_author != ctx.user_id:
-                    recipients[parent_author] = "comment.reply"
+            if data.parent_id:
+                parent = (
+                    entry_ref.collection("comments").document(data.parent_id).get()
+                )
+                if parent.exists:
+                    parent_author = (parent.to_dict() or {}).get("authorUid")
+                    if parent_author and parent_author != ctx.user_id:
+                        recipients[parent_author] = "comment.reply"
 
-        for mentioned_uid in data.mentions:
-            if mentioned_uid and mentioned_uid != ctx.user_id:
-                recipients[mentioned_uid] = "comment.mention"
+            for mentioned_uid in data.mentions:
+                if mentioned_uid and mentioned_uid != ctx.user_id:
+                    recipients[mentioned_uid] = "comment.mention"
 
-        for uid, event_id in recipients.items():
-            recipient = db.collection("users").document(uid).get().to_dict() or {}
-            publisher.publish(
-                DomainEvent(
-                    id=event_id,
-                    payload=AccountNotificationPayload(
-                        to=recipient.get("email", ""),
-                        name=recipient.get("name", ""),
-                        title=_COMMENT_NOTIFICATION_TITLES[event_id],
-                        message=f"{author_name}: {doc['text'][:80]}",
+            for uid, event_id in recipients.items():
+                recipient = db.collection("users").document(uid).get().to_dict() or {}
+                publisher.publish(
+                    DomainEvent(
+                        id=event_id,
+                        payload=AccountNotificationPayload(
+                            to=recipient.get("email", ""),
+                            name=recipient.get("name", ""),
+                            title=_COMMENT_NOTIFICATION_TITLES[event_id],
+                            message=f"{author_name}: {doc['text'][:80]}",
+                        ),
                     ),
-                ),
+                    project_id=ctx.project_id,
+                    source="timeline_comment",
+                )
+        except Exception as exc:  # noqa: BLE001 — must never break comment creation
+            logger.error(
+                "comment_notify_failed",
+                entry_id=entry_ref.id,
+                user_id=ctx.user_id,
                 project_id=ctx.project_id,
-                source="timeline_comment",
+                error=str(exc),
+                exc_info=exc,
             )
+            return None
 
     @log
     def list_comments(
