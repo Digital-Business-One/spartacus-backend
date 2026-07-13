@@ -383,3 +383,26 @@ class TestCommentRoutes:
             fs.client.return_value = db
             r = client.get("/timeline/e1/mentionable", headers=_HEADERS)
         assert r.status_code == 404
+
+    def test_list_comments_missing_entry_404(self):
+        db, *_ = _mock_db(None)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.get("/timeline/e1/comments", headers=_HEADERS)
+        assert r.status_code == 404
+
+    def test_list_comments_blocked_entry_403(self):
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, *_ = _mock_db(entry)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.get("/timeline/e1/comments", headers=_HEADERS)
+        assert r.status_code == 403
+
+    def test_list_mentionable_blocked_entry_403(self):
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, *_ = _mock_db(entry)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.get("/timeline/e1/mentionable", headers=_HEADERS)
+        assert r.status_code == 403
