@@ -37,6 +37,7 @@ def _ctx(uid="u1", roles=None):
 
 def _entry(**over):
     base = {
+        "projectId": _PROJECT_ID,
         "visibility": "public",
         "status": "active",
         "targetUid": None,
@@ -236,7 +237,9 @@ class TestMentionValidation:
                     "photoUrl": None, "dependentUids": ["owner9"],
                 },
             },
-            memberships_map={},
+            # The guardian is a project member (role guardian); their mention
+            # survives via dependent-visibility, not a staff role.
+            memberships_map={f"{_PROJECT_ID}_guardian_uid": ["guardian"]},
         )
         with patch(_FS) as fs, \
              patch("app.services.timeline_service.publisher"):
@@ -294,6 +297,54 @@ class TestMentionValidation:
                 CommentCreate(text="oi", mentions=["ghost_uid"]),
             )
         assert out.mentions == []
+
+    def test_public_card_non_member_mention_is_stripped(self):
+        """Multi-tenant leak fix: on a PUBLIC card, an adult who is NOT a
+        member of the token's project must not survive mention validation,
+        even though the card itself is publicly visible."""
+        entry = _entry(visibility="public")
+        # default user doc is an adult; no membership doc for "other_project_uid"
+        db, entry_ref, comments = _mock_db(entry, memberships_map={})
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher"):
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            out = TimelineService().add_comment(
+                "e1", _ctx("commenter"),
+                CommentCreate(text="oi", mentions=["other_project_uid"]),
+            )
+        assert out.mentions == []
+
+
+class TestProjectScoping:
+    """Multi-tenant guard: comment endpoints load the entry globally by id,
+    so an entry belonging to another project must be unreachable regardless
+    of visibility."""
+
+    def test_add_comment_cross_project_entry_raises_permission(self):
+        entry = _entry(projectId="another-project", visibility="public")
+        db, *_ = _mock_db(entry)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().add_comment(
+                    "e1", _ctx("u1"), CommentCreate(text="oi"))
+
+    def test_list_comments_cross_project_entry_raises_permission(self):
+        entry = _entry(projectId="another-project", visibility="public")
+        db, *_ = _mock_db(entry)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().list_comments("e1", _ctx("u1"))
+
+    def test_mentionable_cross_project_entry_raises_permission(self):
+        entry = _entry(projectId="another-project", visibility="public")
+        db, *_ = _mock_db(entry)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().list_mentionable("e1", _ctx("u1"))
 
 
 class TestListDelete:
@@ -474,7 +525,8 @@ class TestMentionable:
 class TestCommentNotifications:
     def test_mention_and_owner_events_published(self):
         entry = _entry(authorUid="owner1", targetUid=None)
-        db, entry_ref, comments = _mock_db(entry)
+        db, entry_ref, comments = _mock_db(
+            entry, memberships_map={f"{_PROJECT_ID}_adult1": ["student"]})
         published = []
         with patch(_FS) as fs, \
              patch("app.services.timeline_service.publisher") as pub:
@@ -520,7 +572,8 @@ class TestCommentNotifications:
 
     def test_dedup_prefers_mention_label_when_owner_also_mentioned(self):
         entry = _entry(authorUid="owner1", targetUid=None)
-        db, entry_ref, comments = _mock_db(entry)
+        db, entry_ref, comments = _mock_db(
+            entry, memberships_map={f"{_PROJECT_ID}_owner1": ["student"]})
         published = []
         with patch(_FS) as fs, \
              patch("app.services.timeline_service.publisher") as pub:

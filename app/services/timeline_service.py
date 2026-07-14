@@ -283,7 +283,15 @@ class TimelineService:
         return bool(_STAFF_ROLES & set(ctx.roles))
 
     def can_view_entry(self, entry: dict, ctx: AuthContext) -> bool:
-        """Reuse the feed visibility rule (RFC-11) for a single entry."""
+        """Reuse the feed visibility rule (RFC-11) for a single entry.
+
+        Multi-tenant guard: a comment endpoint loads the entry globally by
+        id, so it must first reject any entry that does not belong to the
+        project in the caller's token (X-Project-Id). Without this, a card
+        from another project would be reachable via the comment routes.
+        """
+        if entry.get("projectId") != ctx.project_id:
+            return False
         db = firestore.client()
         is_staff = self._is_staff(ctx)
         dependents = (
@@ -292,8 +300,14 @@ class TimelineService:
         return self._is_visible(entry, ctx.user_id, dependents, is_staff)
 
     def _uid_can_view(self, db, entry: dict, project_id: str, uid: str) -> bool:
+        # Multi-tenant scoping: a uid is only considered if it is a member of
+        # THIS project. This also closes a leak on PUBLIC cards, where
+        # _is_visible would otherwise return True for any adult uid — even one
+        # from another project — letting a client mention a non-member.
         mem = db.collection("memberships").document(f"{project_id}_{uid}").get()
-        roles = mem.to_dict().get("roles", []) if mem.exists else []
+        if not mem.exists:
+            return False
+        roles = mem.to_dict().get("roles", []) or []
         is_staff = bool(_STAFF_ROLES & set(roles))
         deps = [] if is_staff else self._get_dependents(db, uid, project_id)
         return self._is_visible(entry, uid, deps, is_staff)
