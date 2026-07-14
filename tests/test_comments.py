@@ -298,6 +298,22 @@ class TestMentionValidation:
             )
         assert out.mentions == []
 
+    def test_valid_mention_resolves_display_string(self):
+        """Bug fix: a valid mention persists + returns its display (nickname→
+        name) so the client can highlight the full '@Nome Completo' span."""
+        entry, db, entry_ref, comments = self._entry_and_db(
+            ok_adult_uid=["teacher"])
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher"):
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            out = TimelineService().add_comment(
+                "e1", _ctx("commenter", ["teacher"]),
+                CommentCreate(text="oi @Staffer", mentions=["ok_adult_uid"]),
+            )
+        assert out.mention_displays == ["Staffer"]
+        assert comments.add.call_args[0][0]["mentionDisplays"] == ["Staffer"]
+
     def test_public_card_non_member_mention_is_stripped(self):
         """Multi-tenant leak fix: on a PUBLIC card, an adult who is NOT a
         member of the token's project must not survive mention validation,
@@ -357,9 +373,10 @@ class TestListDelete:
             "authorUid": "u1",
             "authorName": "A",
             "authorPhotoUrl": None,
-            "text": "hi",
+            "text": "oi @João da Silva",
             "parentId": None,
-            "mentions": [],
+            "mentions": ["joao_uid"],
+            "mentionDisplays": ["João da Silva"],
             "createdAt": "2026-07-13T00:00:00+00:00",
             "deleted": False,
             "deletedBy": None,
@@ -370,7 +387,9 @@ class TestListDelete:
         with patch(_FS) as fs:
             fs.client.return_value = db
             page = TimelineService().list_comments("e1", _ctx("u1"))
-        assert len(page.items) == 1 and page.items[0].text == "hi"
+        assert len(page.items) == 1 and page.items[0].text == "oi @João da Silva"
+        # multi-word display round-trips so the client can highlight it
+        assert page.items[0].mention_displays == ["João da Silva"]
 
     def test_delete_by_staff_soft_deletes(self):
         entry = _entry()

@@ -358,6 +358,7 @@ class TimelineService:
         valid_mentions = self._validate_mentions(
             db, entry, ctx.project_id, data.mentions
         )
+        mention_displays = self._resolve_displays(db, valid_mentions)
         now = datetime.now(timezone.utc).isoformat()
         doc = {
             "authorUid": ctx.user_id,
@@ -366,6 +367,7 @@ class TimelineService:
             "text": data.text.strip(),
             "parentId": data.parent_id,
             "mentions": valid_mentions,
+            "mentionDisplays": mention_displays,
             "createdAt": now,
             "deleted": False,
             "deletedBy": None,
@@ -384,10 +386,24 @@ class TimelineService:
             text=doc["text"],
             parent_id=doc["parentId"],
             mentions=doc["mentions"],
+            mention_displays=doc["mentionDisplays"],
             created_at=now,
             deleted=False,
             deleted_by=None,
         )
+
+    def _resolve_displays(self, db, uids: list[str]) -> list[str]:
+        """Resolve each uid's display (nickname→name) — same rule as
+        list_mentionable — so the client can highlight the full mention span.
+        """
+        displays: list[str] = []
+        for uid in uids:
+            u = db.collection("users").document(uid).get()
+            d = u.to_dict() or {} if u.exists else {}
+            display = (d.get("nickname") or "").strip() or (d.get("name") or "").strip()
+            if display:
+                displays.append(display)
+        return displays
 
     def _notify_comment(
         self, db, ctx: AuthContext, entry: dict, entry_ref, data, doc: dict
@@ -481,6 +497,7 @@ class TimelineService:
                 text="" if c.get("deleted") else c["text"],
                 parent_id=c.get("parentId"),
                 mentions=c.get("mentions", []),
+                mention_displays=c.get("mentionDisplays", []),
                 created_at=c["createdAt"],
                 deleted=c.get("deleted", False),
                 deleted_by=c.get("deletedBy"),
