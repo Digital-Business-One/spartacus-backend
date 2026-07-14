@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -10,6 +10,14 @@ class CommentCreate(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
     parent_id: Optional[str] = None
     mentions: list[str] = Field(default_factory=list)
+
+    @field_validator("text")
+    @classmethod
+    def _strip_and_reject_blank(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("text must not be empty or whitespace-only")
+        return stripped
 
 
 class CommentOut(BaseModel):

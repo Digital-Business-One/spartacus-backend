@@ -10,7 +10,7 @@ from app.domain.enums import STAFF_ROLES, TimelineVisibility
 from app.events import publisher
 from app.events.models import AccountNotificationPayload, DomainEvent
 from app.logging.decorator import log
-from app.models.comment import CommentOut, CommentsPage, MentionableOut
+from app.models.comment import CommentCreate, CommentOut, CommentsPage, MentionableOut
 from app.models.timeline import TimelineEntryOut
 from app.security.context import AuthContext
 
@@ -291,8 +291,46 @@ class TimelineService:
         )
         return self._is_visible(entry, ctx.user_id, dependents, is_staff)
 
+    def _uid_can_view(self, db, entry: dict, project_id: str, uid: str) -> bool:
+        mem = db.collection("memberships").document(f"{project_id}_{uid}").get()
+        roles = mem.to_dict().get("roles", []) if mem.exists else []
+        is_staff = bool(_STAFF_ROLES & set(roles))
+        deps = [] if is_staff else self._get_dependents(db, uid, project_id)
+        return self._is_visible(entry, uid, deps, is_staff)
+
+    def _validate_mentions(
+        self, db, entry: dict, project_id: str, mentions: list[str]
+    ) -> list[str]:
+        """Server-side mention validation (child safety — RFC-11).
+
+        A client-supplied uid is only kept if it is BOTH an adult (a minor
+        must never receive a mention push or be pulled into a thread) AND
+        currently able to view THIS entry (an adult who can't see a
+        personal card must never have its text leaked to them via a
+        mention). Mirrors the autocomplete filtering in list_mentionable,
+        but re-checked here because the create path cannot trust
+        client-supplied mentions[].
+        """
+        valid: list[str] = []
+        seen: set[str] = set()
+        for uid in mentions:
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            user_snap = db.collection("users").document(uid).get()
+            if not user_snap.exists:
+                continue
+            if not is_adult((user_snap.to_dict() or {}).get("birthDate")):
+                continue
+            if not self._uid_can_view(db, entry, project_id, uid):
+                continue
+            valid.append(uid)
+        return valid
+
     @log
-    def add_comment(self, entry_id: str, ctx: AuthContext, data) -> CommentOut:
+    def add_comment(
+        self, entry_id: str, ctx: AuthContext, data: CommentCreate
+    ) -> CommentOut:
         db = firestore.client()
         entry_ref = db.collection(self._COLLECTION).document(entry_id)
         snap = entry_ref.get()
@@ -303,6 +341,9 @@ class TimelineService:
             raise PermissionError("Sem acesso a este card")
 
         author = db.collection("users").document(ctx.user_id).get().to_dict() or {}
+        valid_mentions = self._validate_mentions(
+            db, entry, ctx.project_id, data.mentions
+        )
         now = datetime.now(timezone.utc).isoformat()
         doc = {
             "authorUid": ctx.user_id,
@@ -310,7 +351,7 @@ class TimelineService:
             "authorPhotoUrl": author.get("photoUrl"),
             "text": data.text.strip(),
             "parentId": data.parent_id,
-            "mentions": data.mentions,
+            "mentions": valid_mentions,
             "createdAt": now,
             "deleted": False,
             "deletedBy": None,
@@ -369,7 +410,7 @@ class TimelineService:
                     if parent_author and parent_author != ctx.user_id:
                         recipients[parent_author] = "comment.reply"
 
-            for mentioned_uid in data.mentions:
+            for mentioned_uid in doc.get("mentions", []):
                 if mentioned_uid and mentioned_uid != ctx.user_id:
                     recipients[mentioned_uid] = "comment.mention"
 
@@ -439,6 +480,12 @@ class TimelineService:
     def delete_comment(self, entry_id: str, comment_id: str, ctx: AuthContext) -> None:
         db = firestore.client()
         entry_ref = db.collection(self._COLLECTION).document(entry_id)
+        entry_snap = entry_ref.get()
+        if not entry_snap.exists:
+            raise LookupError("Timeline entry não encontrada")
+        if not self.can_view_entry(entry_snap.to_dict(), ctx):
+            raise PermissionError("Sem acesso a este card")
+
         comment_ref = entry_ref.collection("comments").document(comment_id)
         comment_snap = comment_ref.get()
         if not comment_snap.exists:

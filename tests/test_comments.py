@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.models.comment import CommentCreate
 from app.security.context import AuthContext
@@ -45,7 +46,14 @@ def _entry(**over):
     return base
 
 
-def _mock_db(entry, comment_docs=None, user_doc=None, parent_doc=None, users_map=None):
+def _mock_db(
+    entry,
+    comment_docs=None,
+    user_doc=None,
+    parent_doc=None,
+    users_map=None,
+    memberships_map=None,
+):
     db = MagicMock()
     entry_ref = MagicMock()
     entry_snap = MagicMock(exists=bool(entry))
@@ -84,13 +92,42 @@ def _mock_db(entry, comment_docs=None, user_doc=None, parent_doc=None, users_map
     users_col = MagicMock()
     users_col.document.side_effect = user_document
 
+    # memberships collection (per-uid visibility checks for mention validation
+    # and, historically, staff-role lookups). Doc id is "{projectId}_{uid}".
+    memberships_map = memberships_map or {}
+
+    def membership_document(doc_id):
+        ref = MagicMock()
+        roles = memberships_map.get(doc_id)
+        snap = MagicMock(exists=roles is not None)
+        snap.to_dict.return_value = {"roles": roles} if roles is not None else {}
+        ref.get.return_value = snap
+        return ref
+
+    memberships_col = MagicMock()
+    memberships_col.document.side_effect = membership_document
+
     def coll(name):
-        return {"timeline_entries": entries_col, "users": users_col}.get(
-            name, MagicMock()
-        )
+        return {
+            "timeline_entries": entries_col,
+            "users": users_col,
+            "memberships": memberships_col,
+        }.get(name, MagicMock())
 
     db.collection.side_effect = coll
     return db, entry_ref, comments_col
+
+
+class TestCommentCreateValidation:
+    """MINOR fix: whitespace-only text must be rejected at the model layer
+    (422), not pass min_length=1 and become an empty persisted comment."""
+
+    def test_whitespace_only_text_rejected(self):
+        with pytest.raises(ValidationError):
+            CommentCreate(text="   ")
+
+    def test_text_is_stripped(self):
+        assert CommentCreate(text="  hi  ").text == "hi"
 
 
 class TestAddComment:
@@ -123,6 +160,140 @@ class TestAddComment:
             fs.client.return_value = db
             with pytest.raises(LookupError):
                 TimelineService().add_comment("e1", _ctx(), CommentCreate(text="x"))
+
+
+class TestMentionValidation:
+    """CRITICAL child-safety fix: `mentions[]` is client-supplied and must be
+    re-validated server-side on the create path, not just filtered for the
+    autocomplete (list_mentionable). A submitted uid only survives if it is
+    BOTH an adult AND currently able to view this specific entry."""
+
+    def _entry_and_db(self, **memberships):
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, entry_ref, comments = _mock_db(
+            entry,
+            users_map={
+                "minor_uid": {
+                    "name": "Kid", "birthDate": "01/01/2015",
+                    "photoUrl": None, "dependentUids": [],
+                },
+                "outsider_adult_uid": {
+                    "name": "Outsider", "birthDate": "01/01/1990",
+                    "photoUrl": None, "dependentUids": [],
+                },
+                "ok_adult_uid": {
+                    "name": "Staffer", "birthDate": "01/01/1985",
+                    "photoUrl": None, "dependentUids": [],
+                },
+            },
+            memberships_map={
+                f"{_PROJECT_ID}_{uid}": roles for uid, roles in memberships.items()
+            },
+        )
+        return entry, db, entry_ref, comments
+
+    def test_minor_and_unauthorized_adult_mentions_are_stripped(self):
+        """Only the adult who can view the personal card (here, via a staff
+        role) survives — the minor and the outsider adult must not."""
+        entry, db, entry_ref, comments = self._entry_and_db(
+            ok_adult_uid=["teacher"]
+        )
+        published: list[tuple[str, str]] = []
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher") as pub:
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            pub.publish.side_effect = (
+                lambda ev, **k: published.append((ev.id, ev.payload.message))
+            )
+            out = TimelineService().add_comment(
+                "e1", _ctx("commenter", ["teacher"]),
+                CommentCreate(
+                    text="oi",
+                    mentions=["minor_uid", "outsider_adult_uid", "ok_adult_uid"],
+                ),
+            )
+        # Only the adult who can view the card is kept, on the response...
+        assert out.mentions == ["ok_adult_uid"]
+        # ...and on what was actually persisted to Firestore.
+        persisted_doc = comments.add.call_args[0][0]
+        assert persisted_doc["mentions"] == ["ok_adult_uid"]
+        # Exactly one comment.mention push fired (for ok_adult_uid); the card
+        # owner (owner9) also gets a comment.on_card push — nothing else.
+        mention_events = [eid for eid, _ in published if eid == "comment.mention"]
+        assert len(mention_events) == 1
+        assert {eid for eid, _ in published} <= {"comment.mention", "comment.on_card"}
+
+    def test_adult_who_can_view_via_dependent_is_kept(self):
+        """A guardian of the card's target can view a personal_and_staff
+        card even without a staff role — their mention must survive too."""
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, entry_ref, comments = _mock_db(
+            entry,
+            users_map={
+                "guardian_uid": {
+                    "name": "Guardian", "birthDate": "01/01/1980",
+                    "photoUrl": None, "dependentUids": ["owner9"],
+                },
+            },
+            memberships_map={},
+        )
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher"):
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            out = TimelineService().add_comment(
+                "e1", _ctx("commenter", ["teacher"]),
+                CommentCreate(text="oi", mentions=["guardian_uid"]),
+            )
+        assert out.mentions == ["guardian_uid"]
+
+    def test_duplicate_mentions_are_deduped(self):
+        entry, db, entry_ref, comments = self._entry_and_db(
+            ok_adult_uid=["teacher"]
+        )
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher"):
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            out = TimelineService().add_comment(
+                "e1", _ctx("commenter", ["teacher"]),
+                CommentCreate(
+                    text="oi", mentions=["ok_adult_uid", "ok_adult_uid"]
+                ),
+            )
+        assert out.mentions == ["ok_adult_uid"]
+
+    def test_nonexistent_mentioned_uid_is_stripped(self):
+        entry = _entry(visibility="public")
+        db, entry_ref, comments = _mock_db(entry, users_map={})
+        # Redefine the users() lookup so that "ghost_uid" resolves to a
+        # non-existent user doc, unlike the default author lookup.
+        users_col = db.collection("users")
+
+        def user_document(uid):
+            ref = MagicMock()
+            if uid == "ghost_uid":
+                snap = MagicMock(exists=False)
+                snap.to_dict.return_value = {}
+            else:
+                snap = MagicMock(exists=True)
+                snap.to_dict.return_value = {
+                    "name": "Autor", "photoUrl": None, "birthDate": "01/01/1990",
+                }
+            ref.get.return_value = snap
+            return ref
+
+        users_col.document.side_effect = user_document
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher"):
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            out = TimelineService().add_comment(
+                "e1", _ctx("commenter"),
+                CommentCreate(text="oi", mentions=["ghost_uid"]),
+            )
+        assert out.mentions == []
 
 
 class TestListDelete:
@@ -207,6 +378,34 @@ class TestListDelete:
             fs.client.return_value = db
             with pytest.raises(LookupError):
                 TimelineService().delete_comment("e1", "c1", _ctx())
+
+    def test_delete_missing_entry_raises_lookup(self):
+        """MINOR fix: delete must also 404 when the parent entry is gone."""
+        db, entry_ref, comments = _mock_db(None)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(LookupError):
+                TimelineService().delete_comment("e1", "c1", _ctx())
+
+    def test_delete_on_blocked_entry_raises_permission(self):
+        """MINOR fix: delete must gate on entry visibility, consistent with
+        list/create/mentionable — even the comment's own author can't
+        delete a comment on a card they can no longer see (prevents
+        404-vs-403 probing on unseen entries)."""
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, entry_ref, comments = _mock_db(entry)
+        cref = MagicMock()
+        csnap = MagicMock(exists=True)
+        # "stranger" is even the comment's own author — ownership alone must
+        # not be enough once entry visibility is enforced.
+        csnap.to_dict.return_value = {"authorUid": "stranger", "deleted": False}
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().delete_comment("e1", "c1", _ctx("stranger"))
+        cref.update.assert_not_called()
 
     def test_list_on_blocked_entry_raises_permission(self):
         entry = _entry(visibility="personal_and_staff", targetUid="owner9")
@@ -442,6 +641,21 @@ class TestCommentRoutes:
             )
         assert r.status_code == 404
 
+    def test_post_whitespace_only_text_422(self):
+        """MINOR fix: a whitespace-only text must be rejected at validation
+        time (422), not silently stripped into an empty comment that still
+        increments commentsCount."""
+        entry = _entry()
+        db, entry_ref, comments = _mock_db(entry)
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.post(
+                "/timeline/e1/comments", headers=_HEADERS, json={"text": "   "}
+            )
+        assert r.status_code == 422
+        comments.add.assert_not_called()
+        entry_ref.update.assert_not_called()
+
     def test_list_comments_200(self):
         entry = _entry()
         db, entry_ref, comments = _mock_db(entry)
@@ -505,6 +719,20 @@ class TestCommentRoutes:
             fs.client.return_value = db
             r = client.delete("/timeline/e1/comments/c1", headers=_HEADERS)
         assert r.status_code == 404
+
+    def test_delete_comment_blocked_entry_403(self):
+        """MINOR fix: delete gates on entry visibility at the route level too."""
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, entry_ref, comments = _mock_db(entry)
+        cref = MagicMock()
+        csnap = MagicMock(exists=True)
+        csnap.to_dict.return_value = {"authorUid": "u1", "deleted": False}
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.delete("/timeline/e1/comments/c1", headers=_HEADERS)
+        assert r.status_code == 403
 
     def test_list_mentionable_200(self):
         entry = _entry()
