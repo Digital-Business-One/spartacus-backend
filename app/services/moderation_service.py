@@ -23,7 +23,11 @@ class ModerationService:
         return f"{project_id}_{uid}"
 
     @log
-    def get_level(self, project_id: str, uid: str) -> str:
+    def get_status(self, project_id: str, uid: str) -> tuple[str, str | None]:
+        """Single-read variant of `get_level` that also returns the
+        moderation doc's `reason`, so callers (e.g. `/auth/me`) don't need
+        a second Firestore read — or their own `firestore` import — just to
+        surface why a user was banned."""
         db = firestore.client()
         snap = (
             db.collection(_MODERATION)
@@ -31,8 +35,13 @@ class ModerationService:
             .get()
         )
         if not snap.exists:
-            return "none"
-        return (snap.to_dict() or {}).get("level", "none")
+            return "none", None
+        data = snap.to_dict() or {}
+        return data.get("level", "none"), data.get("reason")
+
+    @log
+    def get_level(self, project_id: str, uid: str) -> str:
+        return self.get_status(project_id, uid)[0]
 
     def _roles_of(self, db, project_id: str, uid: str) -> list[str]:
         mem = db.collection(_MEMBERSHIPS).document(self._doc_id(project_id, uid)).get()

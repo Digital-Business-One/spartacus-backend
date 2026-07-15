@@ -17,6 +17,7 @@ from app.security.context import auth_ctx
 from app.security.decorator import public
 from app.security.firebase import verify_id_token
 from app.services.auth_service import AuthService
+from app.services.moderation_service import ModerationService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -65,12 +66,18 @@ def signup(
 def me() -> MeResponse:
     ctx = auth_ctx.get()
     user_data = AuthService().get_user_status(ctx.user_id)
+    level, reason = ModerationService().get_status(ctx.project_id, ctx.user_id)
+    banned = level == "app_banned"
     return MeResponse(
         uid=ctx.user_id,
         email=ctx.user_email,
         approval_status=user_data["approvalStatus"],
         birth_date=user_data.get("birthDate"),
         roles=ctx.roles or [],
+        app_banned=banned,
+        # Only surface the reason when banned — avoid leaking a stale
+        # reason from a lifted/previous moderation record.
+        moderation_reason=reason if banned else None,
     )
 
 
