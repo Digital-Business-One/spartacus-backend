@@ -13,6 +13,7 @@ from app.logging.decorator import log
 from app.models.comment import CommentCreate, CommentOut, CommentsPage, MentionableOut
 from app.models.timeline import TimelineEntryOut
 from app.security.context import AuthContext
+from app.services.moderation_service import ModerationService
 
 logger = structlog.get_logger()
 
@@ -283,7 +284,15 @@ class TimelineService:
         return bool(_STAFF_ROLES & set(ctx.roles))
 
     def can_view_entry(self, entry: dict, ctx: AuthContext) -> bool:
-        """Reuse the feed visibility rule (RFC-11) for a single entry."""
+        """Reuse the feed visibility rule (RFC-11) for a single entry.
+
+        Multi-tenant guard: a comment endpoint loads the entry globally by
+        id, so it must first reject any entry that does not belong to the
+        project in the caller's token (X-Project-Id). Without this, a card
+        from another project would be reachable via the comment routes.
+        """
+        if entry.get("projectId") != ctx.project_id:
+            return False
         db = firestore.client()
         is_staff = self._is_staff(ctx)
         dependents = (
@@ -292,8 +301,14 @@ class TimelineService:
         return self._is_visible(entry, ctx.user_id, dependents, is_staff)
 
     def _uid_can_view(self, db, entry: dict, project_id: str, uid: str) -> bool:
+        # Multi-tenant scoping: a uid is only considered if it is a member of
+        # THIS project. This also closes a leak on PUBLIC cards, where
+        # _is_visible would otherwise return True for any adult uid — even one
+        # from another project — letting a client mention a non-member.
         mem = db.collection("memberships").document(f"{project_id}_{uid}").get()
-        roles = mem.to_dict().get("roles", []) if mem.exists else []
+        if not mem.exists:
+            return False
+        roles = mem.to_dict().get("roles", []) or []
         is_staff = bool(_STAFF_ROLES & set(roles))
         deps = [] if is_staff else self._get_dependents(db, uid, project_id)
         return self._is_visible(entry, uid, deps, is_staff)
@@ -340,10 +355,14 @@ class TimelineService:
         if not self.can_view_entry(entry, ctx):
             raise PermissionError("Sem acesso a este card")
 
+        if ModerationService().get_level(ctx.project_id, ctx.user_id) != "none":
+            raise PermissionError("Você está impedido de comentar neste projeto")
+
         author = db.collection("users").document(ctx.user_id).get().to_dict() or {}
         valid_mentions = self._validate_mentions(
             db, entry, ctx.project_id, data.mentions
         )
+        mention_displays = self._resolve_displays(db, valid_mentions)
         now = datetime.now(timezone.utc).isoformat()
         doc = {
             "authorUid": ctx.user_id,
@@ -352,6 +371,7 @@ class TimelineService:
             "text": data.text.strip(),
             "parentId": data.parent_id,
             "mentions": valid_mentions,
+            "mentionDisplays": mention_displays,
             "createdAt": now,
             "deleted": False,
             "deletedBy": None,
@@ -370,10 +390,24 @@ class TimelineService:
             text=doc["text"],
             parent_id=doc["parentId"],
             mentions=doc["mentions"],
+            mention_displays=doc["mentionDisplays"],
             created_at=now,
             deleted=False,
             deleted_by=None,
         )
+
+    def _resolve_displays(self, db, uids: list[str]) -> list[str]:
+        """Resolve each uid's display (nickname→name) — same rule as
+        list_mentionable — so the client can highlight the full mention span.
+        """
+        displays: list[str] = []
+        for uid in uids:
+            u = db.collection("users").document(uid).get()
+            d = u.to_dict() or {} if u.exists else {}
+            display = (d.get("nickname") or "").strip() or (d.get("name") or "").strip()
+            if display:
+                displays.append(display)
+        return displays
 
     def _notify_comment(
         self, db, ctx: AuthContext, entry: dict, entry_ref, data, doc: dict
@@ -467,6 +501,7 @@ class TimelineService:
                 text="" if c.get("deleted") else c["text"],
                 parent_id=c.get("parentId"),
                 mentions=c.get("mentions", []),
+                mention_displays=c.get("mentionDisplays", []),
                 created_at=c["createdAt"],
                 deleted=c.get("deleted", False),
                 deleted_by=c.get("deletedBy"),

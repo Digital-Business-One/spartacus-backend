@@ -30,6 +30,11 @@ class CommentOut(BaseModel):
     text: str
     parent_id: Optional[str] = None
     mentions: list[str] = Field(default_factory=list)
+    # Display strings (nickname→name) of the valid mentions, resolved
+    # server-side at creation. The client uses these to highlight the full
+    # "@Nome Completo" span — the raw text alone can't tell where a
+    # multi-word mention ends.
+    mention_displays: list[str] = Field(default_factory=list)
     created_at: str
     deleted: bool = False
     deleted_by: Optional[str] = None

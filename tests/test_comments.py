@@ -26,6 +26,33 @@ _VALID_CLAIMS = {
 _HEADERS = {"Authorization": "Bearer valid-token", "X-Project-Id": _PROJECT_ID}
 
 
+@pytest.fixture(autouse=True)
+def _default_moderation_none():
+    """`ModerationService.get_level` reads via its own `firestore.client()`
+    (a separate import binding from `_FS`, which only patches the one used
+    by TimelineService) — so it is NOT covered by the `_mock_db` fixture's
+    "moderation" collection unless a test also patches
+    `app.services.moderation_service.firestore` directly.
+
+    Default every test to an unmoderated caller (`level == "none"`) here so
+    the existing `add_comment` tests keep passing without each needing to
+    patch `ModerationService` individually. The two enforcement tests below
+    override this by patching `app.services.timeline_service.ModerationService`
+    wholesale, which takes precedence over this fixture.
+    """
+    mod_ref = MagicMock()
+    mod_ref.get.return_value = MagicMock(exists=False)
+    mod_col = MagicMock()
+    mod_col.document.return_value = mod_ref
+    mod_db = MagicMock()
+    mod_db.collection.side_effect = (
+        lambda name: mod_col if name == "moderation" else MagicMock()
+    )
+    with patch("app.services.moderation_service.firestore") as fs:
+        fs.client.return_value = mod_db
+        yield
+
+
 def _ctx(uid="u1", roles=None):
     return AuthContext(
         user_id=uid,
@@ -37,6 +64,7 @@ def _ctx(uid="u1", roles=None):
 
 def _entry(**over):
     base = {
+        "projectId": _PROJECT_ID,
         "visibility": "public",
         "status": "active",
         "targetUid": None,
@@ -161,6 +189,30 @@ class TestAddComment:
             with pytest.raises(LookupError):
                 TimelineService().add_comment("e1", _ctx(), CommentCreate(text="x"))
 
+    def test_comment_blocked_user_cannot_comment(self):
+        db, entry_ref, comments = _mock_db(_entry())
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.ModerationService") as Mod:
+            fs.client.return_value = db
+            Mod.return_value.get_level.return_value = "comment_blocked"
+            with pytest.raises(PermissionError):
+                TimelineService().add_comment(
+                    "e1", _ctx("u1"), CommentCreate(text="oi")
+                )
+        comments.add.assert_not_called()
+
+    def test_app_banned_user_cannot_comment(self):
+        db, entry_ref, comments = _mock_db(_entry())
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.ModerationService") as Mod:
+            fs.client.return_value = db
+            Mod.return_value.get_level.return_value = "app_banned"
+            with pytest.raises(PermissionError):
+                TimelineService().add_comment(
+                    "e1", _ctx("u1"), CommentCreate(text="oi")
+                )
+        comments.add.assert_not_called()
+
 
 class TestMentionValidation:
     """CRITICAL child-safety fix: `mentions[]` is client-supplied and must be
@@ -236,7 +288,9 @@ class TestMentionValidation:
                     "photoUrl": None, "dependentUids": ["owner9"],
                 },
             },
-            memberships_map={},
+            # The guardian is a project member (role guardian); their mention
+            # survives via dependent-visibility, not a staff role.
+            memberships_map={f"{_PROJECT_ID}_guardian_uid": ["guardian"]},
         )
         with patch(_FS) as fs, \
              patch("app.services.timeline_service.publisher"):
@@ -295,6 +349,70 @@ class TestMentionValidation:
             )
         assert out.mentions == []
 
+    def test_valid_mention_resolves_display_string(self):
+        """Bug fix: a valid mention persists + returns its display (nickname→
+        name) so the client can highlight the full '@Nome Completo' span."""
+        entry, db, entry_ref, comments = self._entry_and_db(
+            ok_adult_uid=["teacher"])
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher"):
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            out = TimelineService().add_comment(
+                "e1", _ctx("commenter", ["teacher"]),
+                CommentCreate(text="oi @Staffer", mentions=["ok_adult_uid"]),
+            )
+        assert out.mention_displays == ["Staffer"]
+        assert comments.add.call_args[0][0]["mentionDisplays"] == ["Staffer"]
+
+    def test_public_card_non_member_mention_is_stripped(self):
+        """Multi-tenant leak fix: on a PUBLIC card, an adult who is NOT a
+        member of the token's project must not survive mention validation,
+        even though the card itself is publicly visible."""
+        entry = _entry(visibility="public")
+        # default user doc is an adult; no membership doc for "other_project_uid"
+        db, entry_ref, comments = _mock_db(entry, memberships_map={})
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.publisher"):
+            fs.client.return_value = db
+            fs.Increment = MagicMock(return_value="INC")
+            out = TimelineService().add_comment(
+                "e1", _ctx("commenter"),
+                CommentCreate(text="oi", mentions=["other_project_uid"]),
+            )
+        assert out.mentions == []
+
+
+class TestProjectScoping:
+    """Multi-tenant guard: comment endpoints load the entry globally by id,
+    so an entry belonging to another project must be unreachable regardless
+    of visibility."""
+
+    def test_add_comment_cross_project_entry_raises_permission(self):
+        entry = _entry(projectId="another-project", visibility="public")
+        db, *_ = _mock_db(entry)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().add_comment(
+                    "e1", _ctx("u1"), CommentCreate(text="oi"))
+
+    def test_list_comments_cross_project_entry_raises_permission(self):
+        entry = _entry(projectId="another-project", visibility="public")
+        db, *_ = _mock_db(entry)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().list_comments("e1", _ctx("u1"))
+
+    def test_mentionable_cross_project_entry_raises_permission(self):
+        entry = _entry(projectId="another-project", visibility="public")
+        db, *_ = _mock_db(entry)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().list_mentionable("e1", _ctx("u1"))
+
 
 class TestListDelete:
     def test_list_returns_items_visible_entry(self):
@@ -306,9 +424,10 @@ class TestListDelete:
             "authorUid": "u1",
             "authorName": "A",
             "authorPhotoUrl": None,
-            "text": "hi",
+            "text": "oi @João da Silva",
             "parentId": None,
-            "mentions": [],
+            "mentions": ["joao_uid"],
+            "mentionDisplays": ["João da Silva"],
             "createdAt": "2026-07-13T00:00:00+00:00",
             "deleted": False,
             "deletedBy": None,
@@ -319,7 +438,9 @@ class TestListDelete:
         with patch(_FS) as fs:
             fs.client.return_value = db
             page = TimelineService().list_comments("e1", _ctx("u1"))
-        assert len(page.items) == 1 and page.items[0].text == "hi"
+        assert len(page.items) == 1 and page.items[0].text == "oi @João da Silva"
+        # multi-word display round-trips so the client can highlight it
+        assert page.items[0].mention_displays == ["João da Silva"]
 
     def test_delete_by_staff_soft_deletes(self):
         entry = _entry()
@@ -474,7 +595,8 @@ class TestMentionable:
 class TestCommentNotifications:
     def test_mention_and_owner_events_published(self):
         entry = _entry(authorUid="owner1", targetUid=None)
-        db, entry_ref, comments = _mock_db(entry)
+        db, entry_ref, comments = _mock_db(
+            entry, memberships_map={f"{_PROJECT_ID}_adult1": ["student"]})
         published = []
         with patch(_FS) as fs, \
              patch("app.services.timeline_service.publisher") as pub:
@@ -520,7 +642,8 @@ class TestCommentNotifications:
 
     def test_dedup_prefers_mention_label_when_owner_also_mentioned(self):
         entry = _entry(authorUid="owner1", targetUid=None)
-        db, entry_ref, comments = _mock_db(entry)
+        db, entry_ref, comments = _mock_db(
+            entry, memberships_map={f"{_PROJECT_ID}_owner1": ["student"]})
         published = []
         with patch(_FS) as fs, \
              patch("app.services.timeline_service.publisher") as pub:
