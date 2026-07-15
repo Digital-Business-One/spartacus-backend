@@ -95,6 +95,17 @@ def test_apply_app_ban_emits_event():
     assert ev.id == "account.app_banned"
 
 
+def test_apply_app_ban_by_assistant_succeeds():
+    db, mod_ref = _db(target_roles=["student"])
+    with patch(_FS) as fs, patch("app.services.moderation_service.AccountHistoryService"):
+        fs.client.return_value = db
+        ev = ModerationService().apply(_PID, "u9", _ctx(roles=("assistant",)),
+                                       ModerationLevel.APP_BANNED.value, "grave")
+    assert ev.id == "account.app_banned"
+    assert mod_ref.set.called
+    assert mod_ref.set.call_args[0][0]["level"] == "app_banned"
+
+
 def test_lift_deletes_doc_and_emits():
     db, mod_ref = _db(mod_doc={"level": "app_banned"}, target_roles=["student"])
     with patch(_FS) as fs, patch("app.services.moderation_service.AccountHistoryService"):

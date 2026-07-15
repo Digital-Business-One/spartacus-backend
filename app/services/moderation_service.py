@@ -2,13 +2,12 @@ from datetime import datetime, timezone
 
 from firebase_admin import firestore
 
+from app.domain.enums import STAFF_ROLES
 from app.events.models import AccountModerationPayload, DomainEvent
 from app.logging.decorator import log
-from app.security.context import AuthContext
+from app.security.context import ADMIN_ROLES, AuthContext
 from app.services.account_history_service import AccountHistoryService
 
-_STAFF = {"owner", "assistant", "teacher", "instructor"}
-_APP_BAN_ROLES = {"owner", "assistant"}
 _MODERATION = "moderation"
 _USERS = "users"
 _MEMBERSHIPS = "memberships"
@@ -49,7 +48,7 @@ class ModerationService:
         if target_uid == ctx.user_id:
             raise PermissionError("Não é possível moderar a si mesmo")
         target_roles = set(self._roles_of(db, project_id, target_uid))
-        if (target_roles & _STAFF) and "owner" not in set(ctx.roles):
+        if (target_roles & STAFF_ROLES) and "owner" not in set(ctx.roles):
             raise PermissionError("Apenas o owner pode moderar membros da equipe")
 
     @log
@@ -57,7 +56,7 @@ class ModerationService:
         self, project_id: str, target_uid: str, ctx: AuthContext,
         level: str, reason: str,
     ) -> DomainEvent:
-        if level == "app_banned" and not (_APP_BAN_ROLES & set(ctx.roles)):
+        if level == "app_banned" and not (ADMIN_ROLES & set(ctx.roles)):
             raise PermissionError("Apenas owner/assistant podem banir do app")
         db = firestore.client()
         self._can_moderate(db, project_id, ctx, target_uid)
@@ -101,7 +100,7 @@ class ModerationService:
             (current.to_dict() or {}).get("level", "none")
             if current.exists else "none"
         )
-        if current_level == "app_banned" and not (_APP_BAN_ROLES & set(ctx.roles)):
+        if current_level == "app_banned" and not (ADMIN_ROLES & set(ctx.roles)):
             raise PermissionError("Apenas owner/assistant podem desbanir")
         self._can_moderate(db, project_id, ctx, target_uid)
 
