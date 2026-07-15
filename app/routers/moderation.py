@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
+from app.domain.enums import STAFF_ROLES
 from app.events import publisher
 from app.logging.decorator import log
 from app.models.moderation import ModeratedUsersPage, ModerationSet
@@ -11,12 +12,10 @@ from app.services.moderation_service import ModerationService
 
 router = APIRouter(prefix="/moderation", tags=["moderation"])
 
-_STAFF = ("owner", "assistant", "teacher", "instructor")
-
 
 @log
 @router.get("/users")
-@require_roles(*_STAFF)
+@require_roles(*STAFF_ROLES)
 def list_users(
     q: str = Query(""), status_: str = Query("", alias="status")
 ) -> ModeratedUsersPage:
@@ -26,7 +25,7 @@ def list_users(
 
 @log
 @router.post("/{uid}", status_code=status.HTTP_201_CREATED)
-@require_roles(*_STAFF)
+@require_roles(*STAFF_ROLES)
 def set_moderation(uid: str, body: ModerationSet) -> Response:
     ctx = auth_ctx.get()
     try:
@@ -41,7 +40,7 @@ def set_moderation(uid: str, body: ModerationSet) -> Response:
 
 @log
 @router.delete("/{uid}", status_code=status.HTTP_204_NO_CONTENT)
-@require_roles(*_STAFF)
+@require_roles(*STAFF_ROLES)
 def lift_moderation(uid: str) -> Response:
     ctx = auth_ctx.get()
     try:
