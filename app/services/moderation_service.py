@@ -122,3 +122,39 @@ class ModerationService:
                 author_name=actor_name, reason="",
             ),
         )
+
+    @log
+    def list_users(self, ctx: AuthContext, q: str = "", status: str = ""):
+        from app.models.moderation import ModeratedUserOut, ModeratedUsersPage
+
+        db = firestore.client()
+        mships = (
+            db.collection(_MEMBERSHIPS)
+            .where("projectId", "==", ctx.project_id)
+            .where("status", "==", "active")
+            .stream()
+        )
+        ql = q.strip().lower()
+        items = []
+        for m in mships:
+            md = m.to_dict()
+            uid = md["userId"]
+            roles = md.get("roles", []) or []
+            u = db.collection(_USERS).document(uid).get()
+            if not u.exists:
+                continue
+            d = u.to_dict()
+            name = d.get("name", "")
+            if ql and ql not in name.lower():
+                continue
+            level = self.get_level(ctx.project_id, uid)
+            if status and status != level:
+                continue
+            items.append(ModeratedUserOut(
+                uid=uid, name=name,
+                role_label=roles[0] if roles else None,
+                photo_url=d.get("photoUrl"),
+                level=level, is_staff=bool(set(roles) & STAFF_ROLES),
+            ))
+        items.sort(key=lambda x: x.name.lower())
+        return ModeratedUsersPage(items=items)

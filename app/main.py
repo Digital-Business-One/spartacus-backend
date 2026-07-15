@@ -22,6 +22,7 @@ from app.routers import (
     medical_history,
     members,
     modalities,
+    moderation,
     posts,
     profile,
     projects,
@@ -87,6 +88,7 @@ app.include_router(posts.router)
 app.include_router(timeline.router)
 app.include_router(validation.router)
 app.include_router(jobs.router)
+app.include_router(moderation.router)
 
 # Firebase Admin SDK — uses Application Default Credentials on Cloud Run.
 # Against the local Firebase emulators there are NO real credentials, so
