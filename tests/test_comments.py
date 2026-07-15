@@ -135,21 +135,11 @@ def _mock_db(
     memberships_col = MagicMock()
     memberships_col.document.side_effect = membership_document
 
-    # moderation collection (comment/ban enforcement) — defaults to "no
-    # moderation record" so existing happy-path tests keep passing without
-    # needing to patch ModerationService explicitly.
-    moderation_col = MagicMock()
-    _mod_ref = MagicMock()
-    _mod_snap = MagicMock(exists=False)
-    _mod_ref.get.return_value = _mod_snap
-    moderation_col.document.return_value = _mod_ref
-
     def coll(name):
         return {
             "timeline_entries": entries_col,
             "users": users_col,
             "memberships": memberships_col,
-            "moderation": moderation_col,
         }.get(name, MagicMock())
 
     db.collection.side_effect = coll
