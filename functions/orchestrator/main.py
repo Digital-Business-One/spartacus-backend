@@ -425,6 +425,36 @@ EVENT_RULES: dict[str, dict] = {
         "channels": ["email"],
         "email": {"template_id": _TPL_NOTIFICATION, "subject": "Redefinir senha — Spartacus"},
     },
+    "account.comment_blocked": {
+        "channels": ["push"],
+        "push": [
+            {
+                "target": "owner_and_guardian",
+                "title_template": "Comentários bloqueados",
+                "body_template": "Motivo: {reason}",
+            },
+        ],
+    },
+    "account.app_banned": {
+        "channels": ["push"],
+        "push": [
+            {
+                "target": "owner_and_guardian",
+                "title_template": "Seu acesso ao app foi bloqueado",
+                "body_template": "Motivo: {reason}",
+            },
+        ],
+    },
+    "account.moderation_lifted": {
+        "channels": ["push"],
+        "push": [
+            {
+                "target": "owner_and_guardian",
+                "title_template": "Acesso restaurado",
+                "body_template": "Você já pode usar o app normalmente.",
+            },
+        ],
+    },
 }
 
 
