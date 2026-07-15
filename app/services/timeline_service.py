@@ -13,6 +13,7 @@ from app.logging.decorator import log
 from app.models.comment import CommentCreate, CommentOut, CommentsPage, MentionableOut
 from app.models.timeline import TimelineEntryOut
 from app.security.context import AuthContext
+from app.services.moderation_service import ModerationService
 
 logger = structlog.get_logger()
 
@@ -353,6 +354,9 @@ class TimelineService:
         entry = snap.to_dict()
         if not self.can_view_entry(entry, ctx):
             raise PermissionError("Sem acesso a este card")
+
+        if ModerationService().get_level(ctx.project_id, ctx.user_id) != "none":
+            raise PermissionError("Você está impedido de comentar neste projeto")
 
         author = db.collection("users").document(ctx.user_id).get().to_dict() or {}
         valid_mentions = self._validate_mentions(

@@ -26,6 +26,33 @@ _VALID_CLAIMS = {
 _HEADERS = {"Authorization": "Bearer valid-token", "X-Project-Id": _PROJECT_ID}
 
 
+@pytest.fixture(autouse=True)
+def _default_moderation_none():
+    """`ModerationService.get_level` reads via its own `firestore.client()`
+    (a separate import binding from `_FS`, which only patches the one used
+    by TimelineService) — so it is NOT covered by the `_mock_db` fixture's
+    "moderation" collection unless a test also patches
+    `app.services.moderation_service.firestore` directly.
+
+    Default every test to an unmoderated caller (`level == "none"`) here so
+    the existing `add_comment` tests keep passing without each needing to
+    patch `ModerationService` individually. The two enforcement tests below
+    override this by patching `app.services.timeline_service.ModerationService`
+    wholesale, which takes precedence over this fixture.
+    """
+    mod_ref = MagicMock()
+    mod_ref.get.return_value = MagicMock(exists=False)
+    mod_col = MagicMock()
+    mod_col.document.return_value = mod_ref
+    mod_db = MagicMock()
+    mod_db.collection.side_effect = (
+        lambda name: mod_col if name == "moderation" else MagicMock()
+    )
+    with patch("app.services.moderation_service.firestore") as fs:
+        fs.client.return_value = mod_db
+        yield
+
+
 def _ctx(uid="u1", roles=None):
     return AuthContext(
         user_id=uid,
@@ -108,11 +135,21 @@ def _mock_db(
     memberships_col = MagicMock()
     memberships_col.document.side_effect = membership_document
 
+    # moderation collection (comment/ban enforcement) — defaults to "no
+    # moderation record" so existing happy-path tests keep passing without
+    # needing to patch ModerationService explicitly.
+    moderation_col = MagicMock()
+    _mod_ref = MagicMock()
+    _mod_snap = MagicMock(exists=False)
+    _mod_ref.get.return_value = _mod_snap
+    moderation_col.document.return_value = _mod_ref
+
     def coll(name):
         return {
             "timeline_entries": entries_col,
             "users": users_col,
             "memberships": memberships_col,
+            "moderation": moderation_col,
         }.get(name, MagicMock())
 
     db.collection.side_effect = coll
@@ -161,6 +198,30 @@ class TestAddComment:
             fs.client.return_value = db
             with pytest.raises(LookupError):
                 TimelineService().add_comment("e1", _ctx(), CommentCreate(text="x"))
+
+    def test_comment_blocked_user_cannot_comment(self):
+        db, entry_ref, comments = _mock_db(_entry())
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.ModerationService") as Mod:
+            fs.client.return_value = db
+            Mod.return_value.get_level.return_value = "comment_blocked"
+            with pytest.raises(PermissionError):
+                TimelineService().add_comment(
+                    "e1", _ctx("u1"), CommentCreate(text="oi")
+                )
+        comments.add.assert_not_called()
+
+    def test_app_banned_user_cannot_comment(self):
+        db, entry_ref, comments = _mock_db(_entry())
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.ModerationService") as Mod:
+            fs.client.return_value = db
+            Mod.return_value.get_level.return_value = "app_banned"
+            with pytest.raises(PermissionError):
+                TimelineService().add_comment(
+                    "e1", _ctx("u1"), CommentCreate(text="oi")
+                )
+        comments.add.assert_not_called()
 
 
 class TestMentionValidation:
