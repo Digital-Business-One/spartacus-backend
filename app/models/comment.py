@@ -20,6 +20,21 @@ class CommentCreate(BaseModel):
         return stripped
 
 
+class CommentUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    text: str = Field(min_length=1, max_length=2000)
+    mentions: list[str] = Field(default_factory=list)
+
+    @field_validator("text")
+    @classmethod
+    def _strip_and_reject_blank(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("text must not be empty or whitespace-only")
+        return stripped
+
+
 class CommentOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
@@ -36,6 +51,8 @@ class CommentOut(BaseModel):
     # multi-word mention ends.
     mention_displays: list[str] = Field(default_factory=list)
     created_at: str
+    # ISO timestamp da última edição pelo autor; None = nunca editado.
+    edited_at: Optional[str] = None
     deleted: bool = False
     deleted_by: Optional[str] = None
 

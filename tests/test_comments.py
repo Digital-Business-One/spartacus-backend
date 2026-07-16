@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.models.comment import CommentCreate
+from app.models.comment import CommentCreate, CommentUpdate
 from app.security.context import AuthContext
 from app.services.timeline_service import TimelineService
 
@@ -903,3 +903,141 @@ class TestCommentRoutes:
             fs.client.return_value = db
             r = client.get("/timeline/e1/mentionable", headers=_HEADERS)
         assert r.status_code == 403
+
+
+class TestEditComment:
+    def _comment_doc(self, author="u1", deleted=False):
+        return {
+            "authorUid": author,
+            "authorName": "A",
+            "authorPhotoUrl": None,
+            "text": "original",
+            "parentId": None,
+            "mentions": [],
+            "mentionDisplays": [],
+            "createdAt": "2026-07-13T00:00:00+00:00",
+            "deleted": deleted,
+            "deletedBy": None,
+        }
+
+    def _db_with_comment(self, entry, comment, **mock_db_kwargs):
+        db, entry_ref, comments = _mock_db(entry, **mock_db_kwargs)
+        cref = MagicMock()
+        csnap = MagicMock(exists=comment is not None)
+        csnap.to_dict.return_value = comment or {}
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        return db, entry_ref, comments, cref
+
+    def test_author_edits_own_comment(self):
+        db, entry_ref, comments, cref = self._db_with_comment(
+            _entry(), self._comment_doc())
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            out = TimelineService().edit_comment(
+                "e1", "c1", _ctx("u1"), CommentUpdate(text="novo texto"))
+        assert out.text == "novo texto"
+        assert out.edited_at is not None
+        updated = cref.update.call_args[0][0]
+        assert updated["text"] == "novo texto"
+        assert updated["editedAt"] == out.edited_at
+        # created_at preservado; nenhuma notificação em edição
+        assert out.created_at == "2026-07-13T00:00:00+00:00"
+
+    def test_staff_cannot_edit_others_comment(self):
+        db, *_ = self._db_with_comment(
+            _entry(), self._comment_doc(author="someone_else"))
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().edit_comment(
+                    "e1", "c1", _ctx("staff", ["teacher"]),
+                    CommentUpdate(text="x"))
+
+    def test_deleted_comment_raises_lookup(self):
+        db, *_ = self._db_with_comment(
+            _entry(), self._comment_doc(deleted=True))
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(LookupError):
+                TimelineService().edit_comment(
+                    "e1", "c1", _ctx("u1"), CommentUpdate(text="x"))
+
+    def test_missing_comment_raises_lookup(self):
+        db, *_ = self._db_with_comment(_entry(), None)
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(LookupError):
+                TimelineService().edit_comment(
+                    "e1", "c1", _ctx("u1"), CommentUpdate(text="x"))
+
+    def test_missing_entry_raises_lookup(self):
+        db, *_ = self._db_with_comment(None, self._comment_doc())
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(LookupError):
+                TimelineService().edit_comment(
+                    "e1", "c1", _ctx("u1"), CommentUpdate(text="x"))
+
+    def test_blocked_entry_raises_permission(self):
+        entry = _entry(visibility="personal_and_staff", targetUid="owner9")
+        db, *_ = self._db_with_comment(entry, self._comment_doc(author="stranger"))
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            with pytest.raises(PermissionError):
+                TimelineService().edit_comment(
+                    "e1", "c1", _ctx("stranger"), CommentUpdate(text="x"))
+
+    def test_moderated_author_cannot_edit(self):
+        db, *_ = self._db_with_comment(_entry(), self._comment_doc())
+        with patch(_FS) as fs, \
+             patch("app.services.timeline_service.ModerationService") as Mod:
+            fs.client.return_value = db
+            Mod.return_value.get_level.return_value = "comment_blocked"
+            with pytest.raises(PermissionError):
+                TimelineService().edit_comment(
+                    "e1", "c1", _ctx("u1"), CommentUpdate(text="x"))
+
+    def test_mentions_revalidated_on_edit(self):
+        """Menção a menor enviada na edição é descartada (mesma regra do POST)."""
+        db, entry_ref, comments, cref = self._db_with_comment(
+            _entry(), self._comment_doc(),
+            users_map={
+                "minor_uid": {"name": "Kid", "birthDate": "01/01/2015",
+                              "photoUrl": None, "dependentUids": []},
+            },
+            memberships_map={f"{_PROJECT_ID}_minor_uid": ["student"]},
+        )
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            out = TimelineService().edit_comment(
+                "e1", "c1", _ctx("u1"),
+                CommentUpdate(text="oi @Kid", mentions=["minor_uid"]))
+        assert out.mentions == []
+        assert cref.update.call_args[0][0]["mentions"] == []
+
+    def test_whitespace_only_text_rejected(self):
+        with pytest.raises(ValidationError):
+            CommentUpdate(text="   ")
+
+
+class TestListEditedAt:
+    def test_list_returns_edited_at(self):
+        entry = _entry()
+        db, entry_ref, comments = _mock_db(entry)
+        c1 = MagicMock()
+        c1.id = "c1"
+        c1.to_dict.return_value = {
+            "authorUid": "u1", "authorName": "A", "authorPhotoUrl": None,
+            "text": "hi", "parentId": None, "mentions": [],
+            "mentionDisplays": [], "createdAt": "2026-07-13T00:00:00+00:00",
+            "editedAt": "2026-07-16T00:00:00+00:00",
+            "deleted": False, "deletedBy": None,
+        }
+        q = MagicMock()
+        q.stream.return_value = [c1]
+        comments.order_by.return_value.limit.return_value = q
+        with patch(_FS) as fs:
+            fs.client.return_value = db
+            page = TimelineService().list_comments("e1", _ctx("u1"))
+        assert page.items[0].edited_at == "2026-07-16T00:00:00+00:00"
