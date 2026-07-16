@@ -1041,3 +1041,59 @@ class TestListEditedAt:
             fs.client.return_value = db
             page = TimelineService().list_comments("e1", _ctx("u1"))
         assert page.items[0].edited_at == "2026-07-16T00:00:00+00:00"
+
+
+class TestEditCommentRoute:
+    """TestClient-level tests for PATCH /timeline/{id}/comments/{cid}."""
+
+    def _db_with_comment(self, entry, comment):
+        db, entry_ref, comments = _mock_db(entry)
+        cref = MagicMock()
+        csnap = MagicMock(exists=comment is not None)
+        csnap.to_dict.return_value = comment or {}
+        cref.get.return_value = csnap
+        comments.document.return_value = cref
+        return db
+
+    def _own_comment(self, author="u1", deleted=False):
+        return {
+            "authorUid": author, "authorName": "A", "authorPhotoUrl": None,
+            "text": "original", "parentId": None, "mentions": [],
+            "mentionDisplays": [], "createdAt": "2026-07-13T00:00:00+00:00",
+            "deleted": deleted, "deletedBy": None,
+        }
+
+    def test_patch_comment_200_author(self):
+        db = self._db_with_comment(_entry(), self._own_comment())
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.patch(
+                "/timeline/e1/comments/c1", headers=_HEADERS,
+                json={"text": "novo texto"})
+        assert r.status_code == 200
+        assert r.json()["text"] == "novo texto"
+        assert r.json()["editedAt"] is not None
+
+    def test_patch_comment_403_not_author(self):
+        db = self._db_with_comment(_entry(), self._own_comment(author="someone_else"))
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.patch(
+                "/timeline/e1/comments/c1", headers=_HEADERS, json={"text": "x"})
+        assert r.status_code == 403
+
+    def test_patch_comment_404_deleted(self):
+        db = self._db_with_comment(_entry(), self._own_comment(deleted=True))
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.patch(
+                "/timeline/e1/comments/c1", headers=_HEADERS, json={"text": "x"})
+        assert r.status_code == 404
+
+    def test_patch_comment_422_whitespace(self):
+        db = self._db_with_comment(_entry(), self._own_comment())
+        with patch(_VERIFY, return_value=_VALID_CLAIMS), patch(_FS) as fs:
+            fs.client.return_value = db
+            r = client.patch(
+                "/timeline/e1/comments/c1", headers=_HEADERS, json={"text": "   "})
+        assert r.status_code == 422
