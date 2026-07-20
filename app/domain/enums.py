@@ -34,6 +34,7 @@ class ValidationStatus(StrEnum):
     """Validation lifecycle for attendance and donations.
 
     Attendance flow: REGISTERED → CONFIRMED | ABSENT | ABSENT_JUSTIFIED
+                                            | ABSENT_JUSTIFICATION_PENDING
     Donation flow:   PLEDGED → RECEIVED
     """
     # shared
@@ -43,6 +44,7 @@ class ValidationStatus(StrEnum):
     CONFIRMED = "confirmed"
     ABSENT = "absent"
     ABSENT_JUSTIFIED = "absent_justified"
+    ABSENT_JUSTIFICATION_PENDING = "absent_justification_pending"
     # donations
     PLEDGED = "pledged"
     RECEIVED = "received"

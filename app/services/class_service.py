@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from fastapi import HTTPException
 from firebase_admin import firestore
 
 from app.logging.decorator import log
@@ -117,6 +118,8 @@ def _doc_to_class_out(
         icon_url=data.get("iconUrl"),
         active=data.get("active", True),
         student_count=student_count,
+        attendance_engine_enabled=data.get("attendanceEngineEnabled", False),
+        attendance_start_date=data.get("attendanceStartDate"),
     )
 
 
@@ -200,6 +203,8 @@ class ClassService:
             "iconUrl": None,
             "active": True,
             "createdAt": now,
+            "attendanceEngineEnabled": data.attendance_engine_enabled,
+            "attendanceStartDate": data.attendance_start_date,
         }
         db.collection(self._COLLECTION).document(doc_id).set(doc_data)
 
@@ -219,6 +224,8 @@ class ClassService:
             teacher=data.teacher_name,
             location=data.location,
             age_range=data.age_range,
+            attendance_engine_enabled=data.attendance_engine_enabled,
+            attendance_start_date=data.attendance_start_date,
         )
 
     @log
@@ -253,6 +260,30 @@ class ClassService:
             updates["location"] = data.location
         if data.age_range is not None:
             updates["ageRange"] = data.age_range.model_dump()
+        if data.attendance_engine_enabled is not None:
+            updates["attendanceEngineEnabled"] = data.attendance_engine_enabled
+        if data.attendance_start_date is not None:
+            updates["attendanceStartDate"] = data.attendance_start_date
+
+        # Enforce the invariant against the *merged* state (persisted doc +
+        # this partial update), not just the payload — a PATCH may enable
+        # the engine alone, relying on a start date set in an earlier call.
+        existing_data = doc.to_dict()
+        final_enabled = updates.get(
+            "attendanceEngineEnabled",
+            existing_data.get("attendanceEngineEnabled", False),
+        )
+        final_start_date = updates.get(
+            "attendanceStartDate", existing_data.get("attendanceStartDate")
+        )
+        if final_enabled and not final_start_date:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "attendanceStartDate é obrigatória quando "
+                    "attendanceEngineEnabled=true"
+                ),
+            )
 
         if updates:
             doc_ref.update(updates)

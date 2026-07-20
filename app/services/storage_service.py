@@ -1,5 +1,7 @@
 import io
 import os
+import uuid
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi import HTTPException, UploadFile
@@ -44,6 +46,70 @@ def build_blob_public_url(bucket_name: str, blob_name: str) -> str:
             f"/o/{encoded}?alt=media"
         )
     return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
+
+
+@log
+async def upload_media_attachment(
+    *,
+    uid: str,
+    file: UploadFile,
+    prefix: str,
+    allowed_types: set[str],
+    max_size: int,
+    invalid_type_status: int = 400,
+    oversize_status: int = 400,
+) -> dict:
+    """Validate + upload a generic media attachment, returning the shared
+    `{type, url, name, size}` shape.
+
+    Shared by `POST /posts/upload` and `POST /attendance/justification-upload`
+    — callers differ only in prefix, allowed content-types, size limit and
+    the HTTP status used for validation failures (posts keeps its original
+    400/400; attendance uploads use 415/413 per the design spec).
+    """
+    content_type = (file.content_type or "").lower()
+    if content_type == "image/jpg":
+        content_type = "image/jpeg"
+    if content_type not in allowed_types:
+        raise HTTPException(
+            status_code=invalid_type_status,
+            detail=f"Tipo de arquivo não permitido: {content_type}",
+        )
+
+    contents = await file.read()
+    if len(contents) > max_size:
+        raise HTTPException(
+            status_code=oversize_status,
+            detail=f"Arquivo muito grande (max {max_size // (1024 * 1024)} MB)",
+        )
+
+    ext = (file.filename or "file").rsplit(".", 1)[-1] if file.filename else "bin"
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    blob_name = f"{prefix}/{uid}/{ts}_{uuid.uuid4().hex[:8]}.{ext}"
+
+    bucket_name = os.getenv(
+        "FIREBASE_STORAGE_BUCKET",
+        "spartacus-artes-marciais.firebasestorage.app",
+    )
+    bucket = storage.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    blob.upload_from_string(contents, content_type=content_type)
+    # Bucket has allUsers objectViewer at the IAM level (UBLA enabled),
+    # so per-object make_public() is redundant and would fail.
+
+    if content_type.startswith("image"):
+        att_type = "image"
+    elif content_type.startswith("audio"):
+        att_type = "voice"
+    else:
+        att_type = "file"
+
+    return {
+        "type": att_type,
+        "url": build_blob_public_url(bucket_name, blob_name),
+        "name": file.filename or f"attachment.{ext}",
+        "size": len(contents),
+    }
 
 
 class StorageService:
