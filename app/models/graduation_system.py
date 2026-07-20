@@ -71,7 +71,7 @@ class GraduationStudentCard(BaseModel):
     is_dependent: bool = False
     guardian_uid: Optional[str] = None
     guardian_name: Optional[str] = None
-    # Which modality this card belongs to (populated in roster; harmless in flat dashboard)
+    # Which modality this card belongs to (roster only; harmless in flat dashboard)
     modality_slug: str = ""
     modality_name: str = ""
     # Current graduation in this modality (may be empty = "sem graduação")
