@@ -308,7 +308,7 @@ class GraduationService:
             md = m.to_dict()
             modalities[m.id] = {
                 "name": md.get("name", ""),
-                "slug": _slug(md.get("name", "")),
+                "slug": md.get("slug") or _slug(md.get("name", "")),
             }
 
         # class id → {modality_slug, modality_name, class_name}
