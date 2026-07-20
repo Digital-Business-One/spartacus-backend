@@ -20,6 +20,10 @@ from app.models.graduation_system import (
     GraduationStudentCard,
     GraduationSystem,
     NextBelt,
+    RosterFamily,
+    RosterOut,
+    RosterPerson,
+    RosterTurma,  # noqa: F401  (used by build_roster in Task 3)
 )
 from app.services.account_history_service import AccountHistoryService
 from app.services.attendance_service import _calc_age, _initials
@@ -162,6 +166,132 @@ class GraduationService:
             slug=belt.slug, name=belt.name,
             color=belt.color, max_degree=belt.max_degree,
         )
+
+    # ── Roster (grouped by guardian) ─────────────────────────────────────
+
+    def _to_roster_person(
+        self, p: dict, systems: dict[str, GraduationSystem],
+    ) -> RosterPerson:
+        """Build a RosterPerson from a plain user dict. Pure (no I/O).
+
+        `p` keys: uid, name, nickname, birthDate, photoUrl, guardianUid,
+        graduation (dict), enrolledSlugs (set), turmas (list[RosterTurma]).
+        One card per modality that has an entry OR an enrollment WITH a
+        system. Modalities with neither a system nor an entry are skipped
+        (e.g. MMA → shown only as a turma).
+        """
+        grad_raw = {
+            _slug(k): v for k, v in (p.get("graduation") or {}).items()
+        }
+        enrolled = set(p.get("enrolledSlugs") or [])
+        age = _calc_age(p.get("birthDate"))
+        cards: list[GraduationStudentCard] = []
+        for slug in sorted(set(grad_raw) | enrolled):
+            system = systems.get(slug)
+            entry = grad_raw.get(slug)
+            if system is None and not entry:
+                continue  # no rules, no data → no graduation block
+            belt = entry.get("belt") if entry else None
+            degree = entry.get("degree", 0) if entry else 0
+            status = entry.get("status", "approved") if entry else "none"
+            if system is not None:
+                prog = self.resolve_progression(system, age, belt, degree)
+                modality_name = system.modality_name
+            else:
+                prog = {
+                    "belt_name": belt, "color": None, "max_degree": 0,
+                    "can_add_degree": False, "next_belt": None,
+                    "out_of_band": False,
+                }
+                modality_name = slug
+            cards.append(GraduationStudentCard(
+                user_id=p["uid"],
+                name=p.get("name", ""),
+                nickname=p.get("nickname"),
+                initials=_initials(p.get("name", "")),
+                age=age,
+                photo_url=p.get("photoUrl"),
+                is_dependent=bool(p.get("guardianUid")),
+                guardian_uid=p.get("guardianUid"),
+                modality_slug=slug,
+                modality_name=modality_name,
+                belt=belt,
+                belt_name=prog["belt_name"],
+                color=prog["color"],
+                degree=degree,
+                status=status,
+                max_degree=prog["max_degree"],
+                can_add_degree=prog["can_add_degree"],
+                next_belt=prog["next_belt"],
+                out_of_band=prog["out_of_band"],
+                can_undo=bool(entry and entry.get("prev")),
+            ))
+        return RosterPerson(
+            user_id=p["uid"],
+            display_name=p.get("nickname") or p.get("name", ""),
+            name=p.get("name", ""),
+            initials=_initials(p.get("name", "")),
+            photo_url=p.get("photoUrl"),
+            age=age,
+            is_dependent=bool(p.get("guardianUid")),
+            guardian_uid=p.get("guardianUid"),
+            turmas=p.get("turmas") or [],
+            graduations=cards,
+        )
+
+    def assemble_roster(
+        self, people: list[dict], systems: dict[str, GraduationSystem],
+    ) -> RosterOut:
+        """Group people into families (guardian → dependents). Pure (no I/O).
+
+        Each person dict is as for `_to_roster_person` plus `roles: set[str]`.
+        - A person with dependents is a guardian card; if not a student its
+          graduations are cleared (container only, item 7).
+        - A dependent is nested under its guardian (item 3/4).
+        - A standalone student is its own family.
+        - Anyone who is neither a student nor a guardian is skipped.
+        """
+        persons = {p["uid"]: p for p in people}
+        rendered = {uid: self._to_roster_person(p, systems)
+                    for uid, p in persons.items()}
+
+        deps_by_guardian: dict[str, list[str]] = {}
+        for uid, p in persons.items():
+            g = p.get("guardianUid")
+            if g:
+                deps_by_guardian.setdefault(g, []).append(uid)
+
+        families: list[RosterFamily] = []
+        for uid, p in persons.items():
+            if p.get("guardianUid"):
+                continue  # dependents are attached to their guardian below
+            dep_uids = deps_by_guardian.get(uid, [])
+            roles = p.get("roles") or set()
+            is_guardian = bool(dep_uids) or "guardian" in roles
+            is_student = "student" in roles
+            if not is_guardian and not is_student:
+                continue  # e.g. supporter with no student role, no deps
+            guardian_person = rendered[uid]
+            guardian_is_student = is_student
+            if not guardian_is_student:
+                guardian_person = guardian_person.model_copy(
+                    update={"graduations": []},
+                )
+            families.append(RosterFamily(
+                guardian=guardian_person,
+                guardian_is_student=guardian_is_student,
+                dependents=[rendered[d] for d in dep_uids],
+            ))
+
+        families.sort(key=lambda f: f.guardian.display_name.lower())
+
+        pending = 0
+        for fam in families:
+            for person in [fam.guardian, *fam.dependents]:
+                pending += sum(
+                    1 for c in person.graduations if c.status == "pending"
+                )
+        return RosterOut(families=families, pending_count=pending)
 
     # ── Dashboard ────────────────────────────────────────────────────────
 
