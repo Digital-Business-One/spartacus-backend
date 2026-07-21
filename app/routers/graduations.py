@@ -8,6 +8,7 @@ from app.models.graduation_system import (
     GraduationActionRequest,
     GraduationDashboardOut,
     GraduationSystemsResponse,
+    RosterOut,
 )
 from app.security.context import auth_ctx
 from app.security.decorator import public, require_roles
@@ -30,8 +31,15 @@ def get_graduation_systems(project_id: str) -> GraduationSystemsResponse:
 @log
 @router.get("/graduations/dashboard")
 @require_roles(*_STAFF)
-def get_graduations_dashboard(modality: str) -> GraduationDashboardOut:
+def get_graduations_dashboard(
+    modality: str | None = None,
+    view: str | None = None,
+) -> GraduationDashboardOut | RosterOut:
     ctx = auth_ctx.get()
+    if view == "roster":
+        return GraduationService().build_roster(ctx.project_id)
+    if not modality:
+        raise HTTPException(status_code=422, detail="modality é obrigatório")
     return GraduationService().dashboard(ctx.project_id, modality)
 
 

@@ -10,16 +10,37 @@ from app.events.models import DomainEvent, ValidationPayload
 from app.logging.decorator import log
 from app.models.account import GraduationEntry
 from app.models.attendance import (
+    AnalyticsStudentOut,
     AttendanceActionOut,
+    AttendanceAnalyticsOut,
+    AttendanceCounts,
     AttendanceDashboardOut,
     AttendanceHistoryOut,
     AttendanceRecord,
+    BeltBreakdown,
     ClassBriefOut,
+    GraduationBreakdown,
     MonthSummary,
+    PendingJustificationOut,
     StudentAttendanceCard,
+)
+from app.services.attendance_analytics import (
+    NO_GRADUATION_KEY,
+    aggregate_attendance,
+    graduation_bucket,
+)
+from app.services.graduation_snapshot import (
+    build_graduation_snapshot,
+    resolve_modality_slug,
 )
 
 _TZ_OFFSET = timezone(timedelta(hours=-4))  # Brasnorte-MT = UTC-4
+
+# Sentinel window fed to `aggregate_attendance`: the per-turma window is
+# applied in the service (each record may belong to a different turma with
+# its own start date), so records reaching the pure aggregation have already
+# passed the window. This sentinel therefore always passes.
+_OPEN_WINDOW = "0001-01-01T00:00:00-04:00"
 
 _DAY_CODES_TO_WEEKDAY = {
     "mon": 0, "tue": 1, "wed": 2, "thu": 3,
@@ -92,12 +113,13 @@ class AttendanceService:
         project_id: str,
         uid: str,
         acting_as: str | None = None,
+        filters: dict | None = None,
     ) -> AttendanceHistoryOut:
         target_uid = acting_as or uid
         if acting_as:
             self._assert_guardian_of(uid, target_uid)
         return self._compute_history(
-            project_id=project_id, target_uid=target_uid,
+            project_id=project_id, target_uid=target_uid, filters=filters,
         )
 
     def _compute_history(
@@ -107,6 +129,7 @@ class AttendanceService:
         year: int | None = None,
         months: list[int] | None = None,
         statuses: list[str] | None = None,
+        filters: dict | None = None,
     ) -> AttendanceHistoryOut:
         db = firestore.client()
 
@@ -120,6 +143,7 @@ class AttendanceService:
 
         # 2. Get class schedules with modality names
         schedule_items: list[_ScheduleItem] = []
+        class_data_by_id: dict[str, dict] = {}
         if class_ids:
             refs = [
                 db.collection(self._CLASSES).document(cid)
@@ -131,6 +155,7 @@ class AttendanceService:
                 data = doc.to_dict()
                 # Include inactive classes in history — historical attendance
                 # should remain visible even after a class is deactivated.
+                class_data_by_id[doc.id] = data
 
                 modality_name = self._resolve_modality(db, data)
                 class_id = doc.id
@@ -156,13 +181,38 @@ class AttendanceService:
                             ),
                         )
 
-        # 3. Get all attendance records for the user
-        attendance_docs = list(
+        # 2b. Compute the months window early (needed for the month-summary
+        # bucketing below) and the user's `createdAt`, which is the only
+        # universally-safe Firestore query lower bound: every effective
+        # per-turma counting window is `max(user.createdAt,
+        # turma.attendanceStartDate)` (see `_turma_window`), which is
+        # therefore always >= user.createdAt — regardless of which turmas
+        # the user is CURRENTLY enrolled in. Bounding the query by
+        # current-enrollment turma windows instead (as a previous version
+        # of this code did) silently drops in-window records belonging to
+        # turmas the user has since left, because `classIds` is mutable.
+        today = datetime.now(_TZ_OFFSET).date()
+        months_range = self._resolve_months_range(today, year, months)
+
+        user_created_dt = self._parse_local_dt(
+            user_doc.to_dict().get("createdAt"),
+        )
+
+        # 3. Get all attendance records for the user, windowed at the query
+        # level by `user.createdAt` only (exact per-turma windowing is
+        # still applied below / in `_compute_analytics`). If `createdAt`
+        # is missing, fall back to an unbounded read — correct, just not
+        # optimized.
+        query = (
             db.collection(self._ATTENDANCE)
             .where("projectId", "==", project_id)
             .where("userId", "==", target_uid)
-            .stream()
         )
+        if user_created_dt is not None:
+            query = query.where(
+                "timestamp", ">=", user_created_dt.isoformat(),
+            )
+        attendance_docs = list(query.stream())
 
         # Index attendance records by local date → list of doc data
         attendance_by_date: dict[date, list[dict]] = {}
@@ -183,9 +233,7 @@ class AttendanceService:
             attendance_dates.add(local_date)
 
         # 4. Build month summaries with individual records
-        today = datetime.now(_TZ_OFFSET).date()
-        months_range = self._resolve_months_range(today, year, months)
-
+        # (`today`/`months_range` computed earlier, in step 2b)
         month_summaries: list[MonthSummary] = []
         total_attended = 0
         total_expected = 0
@@ -220,11 +268,141 @@ class AttendanceService:
             if total_expected > 0 else 0
         )
 
+        # 7. Frequência Analítica (Task A6): counts/percent/byGraduation over
+        # the per-turma counting window, honouring month/modality/belt/degree.
+        counts, percent, by_graduation = self._compute_analytics(
+            db, user_doc.to_dict(), attendance_docs, filters,
+        )
+
         return AttendanceHistoryOut(
             streak_days=streak,
             overall_percent=overall,
             months=month_summaries,
+            counts=counts,
+            percent=percent,
+            by_graduation=by_graduation,
         )
+
+    def _compute_analytics(
+        self,
+        db,
+        user_data: dict,
+        attendance_docs: list,
+        filters: dict | None,
+    ) -> tuple[AttendanceCounts, float | None, list[GraduationBreakdown]]:
+        """Window per turma → pure aggregation → typed payload.
+
+        For each attendance record we look up its turma (by `turmaId`):
+        turmas with the engine off — or enabled without a start date (the
+        inconsistency case) — are excluded entirely. The effective window is
+        `max(user.createdAt, turma.attendanceStartDate)`; records before it
+        are dropped. Turma docs are batch-fetched and cached by id so the
+        same turma is never fetched twice.
+
+        Timestamps are localized to Brasnorte (UTC-4) before aggregation so
+        that the month filter and byGraduation buckets are consistent with
+        the legacy monthly bucketing (which localizes the same way).
+        """
+        docs_data = [doc.to_dict() for doc in attendance_docs]
+
+        user_created_dt = self._parse_local_dt(user_data.get("createdAt"))
+
+        # Batch-fetch every referenced turma once, cache by id.
+        turma_ids = {
+            d.get("turmaId") for d in docs_data if d.get("turmaId")
+        }
+        class_cache: dict[str, dict | None] = {}
+        if turma_ids:
+            refs = [
+                db.collection(self._CLASSES).document(tid)
+                for tid in turma_ids
+            ]
+            for doc in db.get_all(refs):
+                class_cache[doc.id] = doc.to_dict() if doc.exists else None
+
+        # Effective window per turma (None = excluded: engine off / no date /
+        # unknown turma).
+        windows = {
+            tid: self._turma_window(class_cache.get(tid), user_created_dt)
+            for tid in turma_ids
+        }
+
+        records: list[dict] = []
+        for d in docs_data:
+            window = windows.get(d.get("turmaId"))
+            if window is None:
+                continue
+            record_dt = self._parse_local_dt(d.get("timestamp"))
+            if record_dt is None or record_dt < window:
+                continue
+            records.append({
+                "status": d.get("status"),
+                "timestamp": record_dt.isoformat(),
+                "modalitySlug": d.get("modalitySlug"),
+                "graduationSnapshot": d.get("graduationSnapshot"),
+            })
+
+        agg = aggregate_attendance(records, _OPEN_WINDOW, filters)
+
+        counts = AttendanceCounts(**agg["counts"])
+        by_graduation = [
+            GraduationBreakdown(
+                key=g["key"],
+                belt=g["belt"],
+                degree=g["degree"],
+                pending=g["pending"],
+                counts=AttendanceCounts(**g["counts"]),
+                percent=g["percent"],
+            )
+            for g in agg["byGraduation"]
+        ]
+        return counts, agg["percent"], by_graduation
+
+    @staticmethod
+    def _parse_local_dt(value) -> datetime | None:
+        """Parse an ISO timestamp and localize to Brasnorte (UTC-4).
+
+        Naive timestamps are assumed to already be local. Returns None for
+        empty/invalid values.
+        """
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            dt = datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_TZ_OFFSET)
+        return dt.astimezone(_TZ_OFFSET)
+
+    @staticmethod
+    def _turma_window(
+        class_data: dict | None, user_created_dt: datetime | None,
+    ) -> datetime | None:
+        """Effective counting window for one turma, or None if excluded.
+
+        None means the record's turma does not count: it doesn't exist, its
+        engine is off, or it's enabled without a start date (inconsistency).
+        Otherwise the window is `max(user.createdAt, attendanceStartDate)`.
+        """
+        if not class_data or not class_data.get("attendanceEngineEnabled"):
+            return None
+        start_date = class_data.get("attendanceStartDate")
+        if not start_date:
+            return None
+        try:
+            start_date_obj = date.fromisoformat(start_date)
+            start_dt = datetime(
+                start_date_obj.year,
+                start_date_obj.month,
+                start_date_obj.day,
+                tzinfo=_TZ_OFFSET,
+            )
+        except (ValueError, TypeError):
+            return None
+        if user_created_dt is None:
+            return start_dt
+        return max(user_created_dt, start_dt)
 
     def _resolve_validator_names(
         self, db, month_summaries: list[MonthSummary],
@@ -307,6 +485,9 @@ class AttendanceService:
                                 "registered": "Aguardando confirmação",
                                 "absent": "Não confirmado",
                                 "absent_justified": "Falta Justificada",
+                                "absent_justification_pending": (
+                                    "Justificativa em análise"
+                                ),
                                 "rejected": "Rejeitado",
                             }.get(s_raw, s_raw),
                             validated_by=r.get("validatedBy"),
@@ -353,6 +534,10 @@ class AttendanceService:
                         status = "absent_justified"
                         status_label = "Falta Justificada"
                         justification = matched.get("justification")
+                    elif status_raw == "absent_justification_pending":
+                        status = "absent_justification_pending"
+                        status_label = "Justificativa em análise"
+                        justification = None
                     elif status_raw == "absent":
                         status = "absent"
                         status_label = "Não confirmado"
@@ -487,6 +672,246 @@ class AttendanceService:
                 status_code=403,
                 detail="Você não é responsável deste dependente",
             )
+
+    # ── Frequência Analítica (Task A7): analytics agregado por turma ──────
+
+    @log
+    def get_analytics(
+        self,
+        project_id: str,
+        class_id: str,
+        month: str | None = None,
+    ) -> AttendanceAnalyticsOut:
+        """Staff-only aggregated view of one turma.
+
+        Reuses A6's per-student counting window (`_turma_window` +
+        `_parse_local_dt`: `max(user.createdAt, turma.attendanceStartDate)`,
+        engine-off/no-start-date turmas rejected upfront with 409) and the
+        pure `aggregate_attendance` engine — called once per student (for
+        `students[]`) and once pooled over every window-filtered record
+        (for `totals`). `byBelt` buckets students by their CURRENT
+        graduation for the turma's modality (via `build_graduation_snapshot`
+        called fresh, and the same `graduation_bucket` classification A6
+        uses for historical snapshots), not the historical per-record one.
+
+        The student universe for `students[]`/`byBelt`/`totals` is the
+        turma ROSTER (`users` where `classIds` array-contains `class_id` —
+        same query `list_today_for_class` uses for the dashboard), not
+        "whoever has a countable record". Every enrolled student appears,
+        even with all-zero counts and `percent=None`; a student who has
+        historical attendance records for this turma but is no longer on
+        the roster (e.g. removed from the turma later) is excluded from
+        `students`/`byBelt`/`totals` — they're not part of the turma
+        anymore.
+        """
+        db = firestore.client()
+
+        class_doc = db.collection(self._CLASSES).document(class_id).get()
+        if (
+            not class_doc.exists
+            or class_doc.to_dict().get("projectId") != project_id
+        ):
+            raise HTTPException(
+                status_code=404, detail="Turma não encontrada",
+            )
+        class_data = class_doc.to_dict()
+
+        if not class_data.get("attendanceEngineEnabled"):
+            raise HTTPException(
+                status_code=409,
+                detail="Motor de frequência desativado para esta turma",
+            )
+        if not class_data.get("attendanceStartDate"):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Turma com motor de frequência ligado mas sem "
+                    "data-base configurada"
+                ),
+            )
+
+        effective_month = month or datetime.now(_TZ_OFFSET).strftime(
+            "%Y-%m",
+        )
+        filters = {"month": effective_month}
+
+        attendance_docs = list(
+            db.collection(self._ATTENDANCE)
+            .where("projectId", "==", project_id)
+            .where("turmaId", "==", class_id)
+            .stream()
+        )
+        docs_data = [doc.to_dict() for doc in attendance_docs]
+
+        # Turma roster — same query `list_today_for_class` uses for the
+        # dashboard. This is the student universe for students[]/byBelt/
+        # totals, not just whoever has a record: non-roster uids (e.g. a
+        # student later removed from the turma) are never looked at below.
+        roster_docs = list(
+            db.collection(self._USERS)
+            .where("classIds", "array_contains", class_id)
+            .stream()
+        )
+        roster_uids = [doc.id for doc in roster_docs]
+        roster_set = set(roster_uids)
+        user_cache: dict[str, dict | None] = {
+            doc.id: doc.to_dict() for doc in roster_docs
+        }
+
+        windows = {
+            uid: self._turma_window(
+                class_data,
+                self._parse_local_dt(
+                    (user_cache.get(uid) or {}).get("createdAt"),
+                ),
+            )
+            for uid in roster_uids
+        }
+
+        modality_slug = resolve_modality_slug(db, class_data)
+
+        records_by_user: dict[str, list[dict]] = {}
+        for d in docs_data:
+            uid = d.get("userId")
+            if uid not in roster_set:
+                continue
+            window = windows.get(uid)
+            if window is None:
+                continue
+            record_dt = self._parse_local_dt(d.get("timestamp"))
+            if record_dt is None or record_dt < window:
+                continue
+            records_by_user.setdefault(uid, []).append({
+                "status": d.get("status"),
+                "timestamp": record_dt.isoformat(),
+                "modalitySlug": d.get("modalitySlug"),
+                "graduationSnapshot": d.get("graduationSnapshot"),
+            })
+
+        # Task B5 — staff review queue: turma records currently
+        # `absent_justification_pending`, windowed + month-filtered exactly
+        # like the counts above (same roster/window; month compared the
+        # same way `_matches_filters` does for the aggregation engine).
+        pending_justifications: list[PendingJustificationOut] = []
+        for doc in attendance_docs:
+            d = doc.to_dict()
+            uid = d.get("userId")
+            if uid not in roster_set:
+                continue
+            if d.get("status") != "absent_justification_pending":
+                continue
+            window = windows.get(uid)
+            if window is None:
+                continue
+            record_dt = self._parse_local_dt(d.get("timestamp"))
+            if record_dt is None or record_dt < window:
+                continue
+            if f"{record_dt.year:04d}-{record_dt.month:02d}" != effective_month:
+                continue
+            justification = d.get("justification") or {}
+            student_data = user_cache.get(uid) or {}
+            pending_justifications.append(PendingJustificationOut(
+                attendance_id=doc.id,
+                user_id=uid,
+                student_name=student_data.get("name", ""),
+                aula_date=record_dt.isoformat(),
+                type_id=justification.get("typeId", ""),
+                type_name=justification.get("typeName", ""),
+                text=justification.get("text", ""),
+                attachment=justification.get("attachment"),
+            ))
+        pending_justifications.sort(key=lambda pj: pj.aula_date)
+
+        students: list[AnalyticsStudentOut] = []
+        belt_groups: dict[str, dict] = {}
+
+        for uid in roster_uids:
+            recs = records_by_user.get(uid, [])
+            agg = aggregate_attendance(recs, _OPEN_WINDOW, filters)
+            counts_dict = agg["counts"]
+
+            counts = AttendanceCounts(**counts_dict)
+            percent = agg["percent"]
+            user_data = user_cache.get(uid) or {}
+
+            current_grad = build_graduation_snapshot(
+                user_data, modality_slug,
+            )
+            graduation_entry = (
+                GraduationEntry(
+                    belt=current_grad.get("belt", ""),
+                    degree=current_grad.get("degree", 0),
+                    status=current_grad.get("status", "approved"),
+                )
+                if current_grad else None
+            )
+
+            key, belt, degree, pending = graduation_bucket(
+                {"graduationSnapshot": current_grad},
+            )
+            group = belt_groups.setdefault(key, {
+                "key": key, "belt": belt, "degree": degree,
+                "pending": pending, "studentCount": 0, "percents": [],
+            })
+            group["studentCount"] += 1
+            if pending:
+                group["pending"] = True
+            if percent is not None:
+                group["percents"].append(percent)
+
+            students.append(AnalyticsStudentOut(
+                user_id=uid,
+                name=user_data.get("name", ""),
+                photo_url=user_data.get("photoUrl"),
+                graduation=graduation_entry,
+                counts=counts,
+                percent=percent,
+                has_pending_justification=counts.justification_pending > 0,
+            ))
+
+        students.sort(
+            key=lambda s: (
+                s.percent is None,
+                s.percent if s.percent is not None else 0.0,
+            ),
+        )
+
+        def _sort_key(g: dict) -> tuple:
+            if g["key"] == NO_GRADUATION_KEY:
+                return (1, "", "")
+            return (0, str(g["belt"]), str(g["degree"]))
+
+        by_belt = [
+            BeltBreakdown(
+                key=g["key"], belt=g["belt"], degree=g["degree"],
+                pending=g["pending"], student_count=g["studentCount"],
+                average_percent=(
+                    sum(g["percents"]) / len(g["percents"])
+                    if g["percents"] else None
+                ),
+            )
+            for g in sorted(belt_groups.values(), key=_sort_key)
+        ]
+
+        all_window_records = [
+            r for recs in records_by_user.values() for r in recs
+        ]
+        totals_agg = aggregate_attendance(
+            all_window_records, _OPEN_WINDOW, filters,
+        )
+        totals = AttendanceCounts(**totals_agg["counts"])
+        all_percents = [s.percent for s in students if s.percent is not None]
+        average_percent = (
+            sum(all_percents) / len(all_percents) if all_percents else None
+        )
+
+        return AttendanceAnalyticsOut(
+            average_percent=average_percent,
+            totals=totals,
+            by_belt=by_belt,
+            students=students,
+            pending_justifications=pending_justifications,
+        )
 
     # ── RFC-14: Dashboard de frequência ──────────────────────────────────
 
@@ -709,12 +1134,17 @@ class AttendanceService:
 
         # Resolve names for event payload
         user_doc = db.collection(self._USERS).document(user_id).get()
-        user_name = (
-            user_doc.to_dict().get("name", "") if user_doc.exists else ""
-        )
+        user_data = user_doc.to_dict() if user_doc.exists else None
+        user_name = (user_data or {}).get("name", "")
         class_doc = db.collection(self._CLASSES).document(class_id).get()
-        class_name = (
-            class_doc.to_dict().get("name", "") if class_doc.exists else ""
+        class_data = class_doc.to_dict() if class_doc.exists else None
+        class_name = (class_data or {}).get("name", "")
+
+        # Graduation snapshot — only used when a *new* attendance doc is
+        # created below; never applied to an update of an existing record.
+        modality_slug = resolve_modality_slug(db, class_data)
+        graduation_snapshot = build_graduation_snapshot(
+            user_data, modality_slug,
         )
 
         # Find existing attendance doc for this user/aula
@@ -756,6 +1186,8 @@ class AttendanceService:
                 "aulaId": resolved_aula_id,
                 "turmaId": class_id,
                 "turmaName": class_name,
+                "modalitySlug": modality_slug,
+                "graduationSnapshot": graduation_snapshot,
                 "timestamp": now_iso,
                 "status": "confirmed",
                 "previousStatus": "absent",

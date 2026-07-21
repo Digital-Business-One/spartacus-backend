@@ -10,7 +10,13 @@ from app.domain.enums import STAFF_ROLES, TimelineVisibility
 from app.events import publisher
 from app.events.models import AccountNotificationPayload, DomainEvent
 from app.logging.decorator import log
-from app.models.comment import CommentCreate, CommentOut, CommentsPage, MentionableOut
+from app.models.comment import (
+    CommentCreate,
+    CommentOut,
+    CommentsPage,
+    CommentUpdate,
+    MentionableOut,
+)
 from app.models.timeline import TimelineEntryOut
 from app.security.context import AuthContext
 from app.services.moderation_service import ModerationService
@@ -503,6 +509,7 @@ class TimelineService:
                 mentions=c.get("mentions", []),
                 mention_displays=c.get("mentionDisplays", []),
                 created_at=c["createdAt"],
+                edited_at=c.get("editedAt"),
                 deleted=c.get("deleted", False),
                 deleted_by=c.get("deletedBy"),
             )
@@ -536,6 +543,59 @@ class TimelineService:
             "deletedAt": datetime.now(timezone.utc).isoformat(),
         })
         entry_ref.update({"commentsCount": firestore.Increment(-1)})
+
+    @log
+    def edit_comment(
+        self, entry_id: str, comment_id: str, ctx: AuthContext, data: CommentUpdate
+    ) -> CommentOut:
+        db = firestore.client()
+        entry_ref = db.collection(self._COLLECTION).document(entry_id)
+        entry_snap = entry_ref.get()
+        if not entry_snap.exists:
+            raise LookupError("Timeline entry não encontrada")
+        entry = entry_snap.to_dict()
+        if not self.can_view_entry(entry, ctx):
+            raise PermissionError("Sem acesso a este card")
+
+        if ModerationService().get_level(ctx.project_id, ctx.user_id) != "none":
+            raise PermissionError("Você está impedido de comentar neste projeto")
+
+        comment_ref = entry_ref.collection("comments").document(comment_id)
+        comment_snap = comment_ref.get()
+        if not comment_snap.exists:
+            raise LookupError("Comentário não encontrado")
+        comment = comment_snap.to_dict()
+        if comment.get("deleted"):
+            # Removido = inexistente para edição (spec 2026-07-16).
+            raise LookupError("Comentário não encontrado")
+        if comment["authorUid"] != ctx.user_id:
+            raise PermissionError("Só o autor pode editar o comentário")
+
+        valid_mentions = self._validate_mentions(
+            db, entry, ctx.project_id, data.mentions
+        )
+        mention_displays = self._resolve_displays(db, valid_mentions)
+        edited_at = datetime.now(timezone.utc).isoformat()
+        comment_ref.update({
+            "text": data.text,
+            "mentions": valid_mentions,
+            "mentionDisplays": mention_displays,
+            "editedAt": edited_at,
+        })
+        return CommentOut(
+            id=comment_id,
+            author_uid=comment["authorUid"],
+            author_name=comment["authorName"],
+            author_photo_url=comment.get("authorPhotoUrl"),
+            text=data.text,
+            parent_id=comment.get("parentId"),
+            mentions=valid_mentions,
+            mention_displays=mention_displays,
+            created_at=comment["createdAt"],
+            edited_at=edited_at,
+            deleted=False,
+            deleted_by=None,
+        )
 
     def _project_member_docs(self, project_id: str) -> list[dict]:
         """UIDs+dados dos membros do projeto (para o autocomplete). Lê

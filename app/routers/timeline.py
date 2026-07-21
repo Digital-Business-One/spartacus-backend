@@ -5,7 +5,13 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.logging.decorator import log
-from app.models.comment import CommentCreate, CommentOut, CommentsPage, MentionableOut
+from app.models.comment import (
+    CommentCreate,
+    CommentOut,
+    CommentsPage,
+    CommentUpdate,
+    MentionableOut,
+)
 from app.models.timeline import (
     LikesResponse,
     LikeUser,
@@ -120,6 +126,18 @@ def delete_comment(entry_id: str, comment_id: str):
     ctx = auth_ctx.get()
     try:
         TimelineService().delete_comment(entry_id, comment_id, ctx)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@log
+@router.patch("/{entry_id}/comments/{comment_id}")
+def edit_comment(entry_id: str, comment_id: str, data: CommentUpdate) -> CommentOut:
+    ctx = auth_ctx.get()
+    try:
+        return TimelineService().edit_comment(entry_id, comment_id, ctx, data)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:

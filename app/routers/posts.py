@@ -1,11 +1,6 @@
 """Posts router — CRUD for timeline posts (RFC-11)."""
 
-import os
-import uuid
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, HTTPException, UploadFile
-from firebase_admin import storage
 
 from app.events import publisher
 from app.logging.decorator import log
@@ -13,7 +8,7 @@ from app.models.post import PostCreate, PostOut, PostUpdate
 from app.security.context import auth_ctx
 from app.security.decorator import require_roles
 from app.services.post_service import PostService
-from app.services.storage_service import build_blob_public_url
+from app.services.storage_service import upload_media_attachment
 
 _UPLOAD_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
 _ALLOWED_MEDIA = {
@@ -82,48 +77,13 @@ def update_post(post_id: str, data: PostUpdate) -> PostOut:
 async def upload_attachment(file: UploadFile) -> dict:
     """Upload a media file for a post attachment. Returns URL + metadata."""
     ctx = auth_ctx.get()
-
-    content_type = (file.content_type or "").lower()
-    if content_type == "image/jpg":
-        content_type = "image/jpeg"
-    if content_type not in _ALLOWED_MEDIA:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Tipo de arquivo não permitido: {content_type}",
-        )
-
-    contents = await file.read()
-    if len(contents) > _UPLOAD_MAX_SIZE:
-        raise HTTPException(status_code=400, detail="Arquivo muito grande (max 10 MB)")
-
-    ext = (file.filename or "file").rsplit(".", 1)[-1] if file.filename else "bin"
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    blob_name = f"posts/{ctx.user_id}/{ts}_{uuid.uuid4().hex[:8]}.{ext}"
-
-    bucket_name = os.getenv(
-        "FIREBASE_STORAGE_BUCKET",
-        "spartacus-artes-marciais.firebasestorage.app",
+    return await upload_media_attachment(
+        uid=ctx.user_id,
+        file=file,
+        prefix="posts",
+        allowed_types=_ALLOWED_MEDIA,
+        max_size=_UPLOAD_MAX_SIZE,
     )
-    bucket = storage.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
-    blob.upload_from_string(contents, content_type=content_type)
-    # Bucket has allUsers objectViewer at the IAM level (UBLA enabled),
-    # so per-object make_public() is redundant and would fail.
-
-    # Classify for the AttachmentIn.type field
-    if content_type.startswith("image"):
-        att_type = "image"
-    elif content_type.startswith("audio"):
-        att_type = "voice"
-    else:
-        att_type = "file"
-
-    return {
-        "type": att_type,
-        "url": build_blob_public_url(bucket_name, blob_name),
-        "name": file.filename or f"attachment.{ext}",
-        "size": len(contents),
-    }
 
 
 @log

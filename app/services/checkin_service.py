@@ -17,6 +17,10 @@ from app.models.checkin import (
     NextClassOut,
     NoCheckinAvailableOut,
 )
+from app.services.graduation_snapshot import (
+    build_graduation_snapshot,
+    resolve_modality_slug,
+)
 
 _TZ_OFFSET = timezone(timedelta(hours=-4))  # Brasnorte-MT = UTC-4
 
@@ -44,6 +48,20 @@ def _now_local() -> datetime:
 def _parse_time(t: str) -> tuple[int, int]:
     parts = t.split(":")
     return int(parts[0]), int(parts[1])
+
+
+def _engine_active(class_data: dict) -> bool:
+    """Attendance engine gate for a turma (RFC "Frequência Analítica").
+
+    Enabled without a start date is an inconsistent config — treated as off
+    here (no check-in offered/allowed). The nightly job
+    (absence_job_service) is responsible for logging the inconsistency for
+    the admin to fix in the backoffice.
+    """
+    return (
+        class_data.get("attendanceEngineEnabled") is True
+        and bool(class_data.get("attendanceStartDate"))
+    )
 
 
 class CheckinService:
@@ -90,6 +108,8 @@ class CheckinService:
                 continue
             data = doc.to_dict()
             if not data.get("active", True):
+                continue
+            if not _engine_active(data):
                 continue
 
             schedule = data.get("schedule") or []
@@ -199,20 +219,31 @@ class CheckinService:
         now_iso = datetime.now(timezone.utc).isoformat()
         turma_id = aula_data.get("turmaId", "")
 
-        user_doc = db.collection(self._USERS).document(target_uid).get()
-        user_name = ""
-        if user_doc.exists:
-            user_name = user_doc.to_dict().get("name", "")
-
         turma_doc = db.collection(self._CLASSES).document(turma_id).get()
-        turma_name = ""
-        modality_name = ""
-        teacher_name: str | None = None
-        if turma_doc.exists:
-            td = turma_doc.to_dict()
-            turma_name = td.get("name", "")
-            modality_name = self._resolve_modality(db, td)
-            teacher_name = td.get("teacherName") or td.get("teacher")
+        turma_data = turma_doc.to_dict() if turma_doc.exists else {}
+
+        # Attendance engine gate: off (or inconsistently configured) turmas
+        # don't accept check-ins — the aula shouldn't have been offered in
+        # the first place, but this is the server-side source of truth.
+        if not _engine_active(turma_data):
+            raise HTTPException(
+                status_code=422,
+                detail="Motor de frequência desativado para esta turma",
+            )
+
+        user_doc = db.collection(self._USERS).document(target_uid).get()
+        user_data = user_doc.to_dict() if user_doc.exists else None
+        user_name = (user_data or {}).get("name", "")
+
+        turma_name = turma_data.get("name", "")
+        modality_name = self._resolve_modality(db, turma_data)
+        modality_slug = resolve_modality_slug(db, turma_data)
+        teacher_name = turma_data.get("teacherName") or turma_data.get("teacher")
+
+        # Graduation snapshot — copied once, at creation, never rewritten.
+        graduation_snapshot = build_graduation_snapshot(
+            user_data, modality_slug,
+        )
 
         # Create attendance record (with denormalized names)
         attendance_data = {
@@ -224,6 +255,8 @@ class CheckinService:
             "turmaId": turma_id,
             "turmaName": turma_name,
             "teacherName": teacher_name,
+            "modalitySlug": modality_slug,
+            "graduationSnapshot": graduation_snapshot,
             "timestamp": now_iso,
             "status": "registered",
             "validatedBy": None,

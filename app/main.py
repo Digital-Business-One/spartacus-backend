@@ -19,6 +19,7 @@ from app.routers import (
     graduations,
     internal,
     jobs,
+    justification_types,
     medical_history,
     members,
     modalities,
@@ -81,6 +82,7 @@ app.include_router(support.router)
 app.include_router(events.router)
 app.include_router(modalities.router)
 app.include_router(graduations.router)
+app.include_router(justification_types.router)
 app.include_router(auth.router)
 app.include_router(medical_history.router)
 app.include_router(profile.router)

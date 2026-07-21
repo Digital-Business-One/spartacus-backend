@@ -20,6 +20,10 @@ from app.models.graduation_system import (
     GraduationStudentCard,
     GraduationSystem,
     NextBelt,
+    RosterFamily,
+    RosterOut,
+    RosterPerson,
+    RosterTurma,
 )
 from app.services.account_history_service import AccountHistoryService
 from app.services.attendance_service import _calc_age, _initials
@@ -162,6 +166,230 @@ class GraduationService:
             slug=belt.slug, name=belt.name,
             color=belt.color, max_degree=belt.max_degree,
         )
+
+    # ── Roster (grouped by guardian) ─────────────────────────────────────
+
+    def _to_roster_person(
+        self, p: dict, systems: dict[str, GraduationSystem],
+    ) -> RosterPerson:
+        """Build a RosterPerson from a plain user dict. Pure (no I/O).
+
+        `p` keys: uid, name, nickname, birthDate, photoUrl, guardianUid,
+        graduation (dict), enrolledSlugs (set), turmas (list[RosterTurma]).
+        One card per modality that has an entry OR an enrollment WITH a
+        system. Modalities with neither a system nor an entry are skipped
+        (e.g. MMA → shown only as a turma).
+        """
+        grad_raw = {
+            _slug(k): v for k, v in (p.get("graduation") or {}).items()
+        }
+        enrolled = set(p.get("enrolledSlugs") or [])
+        age = _calc_age(p.get("birthDate"))
+        cards: list[GraduationStudentCard] = []
+        for slug in sorted(set(grad_raw) | enrolled):
+            system = systems.get(slug)
+            entry = grad_raw.get(slug)
+            if system is None and not entry:
+                continue  # no rules, no data → no graduation block
+            belt = entry.get("belt") if entry else None
+            degree = entry.get("degree", 0) if entry else 0
+            status = entry.get("status", "approved") if entry else "none"
+            if system is not None:
+                prog = self.resolve_progression(system, age, belt, degree)
+                modality_name = system.modality_name
+            else:
+                prog = {
+                    "belt_name": belt, "color": None, "max_degree": 0,
+                    "can_add_degree": False, "next_belt": None,
+                    "out_of_band": False,
+                }
+                modality_name = slug
+            cards.append(GraduationStudentCard(
+                user_id=p["uid"],
+                name=p.get("name", ""),
+                nickname=p.get("nickname"),
+                initials=_initials(p.get("name", "")),
+                age=age,
+                photo_url=p.get("photoUrl"),
+                is_dependent=bool(p.get("guardianUid")),
+                guardian_uid=p.get("guardianUid"),
+                modality_slug=slug,
+                modality_name=modality_name,
+                belt=belt,
+                belt_name=prog["belt_name"],
+                color=prog["color"],
+                degree=degree,
+                status=status,
+                max_degree=prog["max_degree"],
+                can_add_degree=prog["can_add_degree"],
+                next_belt=prog["next_belt"],
+                out_of_band=prog["out_of_band"],
+                can_undo=bool(entry and entry.get("prev")),
+            ))
+        return RosterPerson(
+            user_id=p["uid"],
+            display_name=p.get("nickname") or p.get("name", ""),
+            name=p.get("name", ""),
+            initials=_initials(p.get("name", "")),
+            photo_url=p.get("photoUrl"),
+            age=age,
+            is_dependent=bool(p.get("guardianUid")),
+            guardian_uid=p.get("guardianUid"),
+            turmas=p.get("turmas") or [],
+            graduations=cards,
+        )
+
+    def assemble_roster(
+        self, people: list[dict], systems: dict[str, GraduationSystem],
+    ) -> RosterOut:
+        """Group people into families (guardian → dependents). Pure (no I/O).
+
+        Each person dict is as for `_to_roster_person` plus `roles: set[str]`.
+        - A person with dependents is a guardian card; if not a student its
+          graduations are cleared (container only, item 7).
+        - A dependent is nested under its guardian (item 3/4).
+        - A standalone student is its own family.
+        - Anyone who is neither a student nor a guardian is skipped.
+        """
+        persons = {p["uid"]: p for p in people}
+        rendered = {uid: self._to_roster_person(p, systems)
+                    for uid, p in persons.items()}
+
+        deps_by_guardian: dict[str, list[str]] = {}
+        for uid, p in persons.items():
+            g = p.get("guardianUid")
+            if g:
+                deps_by_guardian.setdefault(g, []).append(uid)
+
+        families: list[RosterFamily] = []
+        for uid, p in persons.items():
+            if p.get("guardianUid"):
+                continue  # dependents are attached to their guardian below
+            dep_uids = deps_by_guardian.get(uid, [])
+            roles = p.get("roles") or set()
+            is_guardian = bool(dep_uids) or "guardian" in roles
+            is_student = "student" in roles
+            if not is_guardian and not is_student:
+                continue  # e.g. supporter with no student role, no deps
+            guardian_person = rendered[uid]
+            guardian_is_student = is_student
+            if not guardian_is_student:
+                guardian_person = guardian_person.model_copy(
+                    update={"graduations": []},
+                )
+            families.append(RosterFamily(
+                guardian=guardian_person,
+                guardian_is_student=guardian_is_student,
+                dependents=[rendered[d] for d in dep_uids],
+            ))
+
+        families.sort(key=lambda f: f.guardian.display_name.lower())
+
+        pending = 0
+        for fam in families:
+            for person in [fam.guardian, *fam.dependents]:
+                pending += sum(
+                    1 for c in person.graduations if c.status == "pending"
+                )
+        return RosterOut(families=families, pending_count=pending)
+
+    @log
+    def build_roster(self, project_id: str) -> RosterOut:
+        """Load active members + guardians and assemble the grouped roster."""
+        db = firestore.client()
+        systems = {s.modality_slug: s for s in self.get_systems(project_id)}
+
+        # modality doc id ("{project}_{slug}") → {name, slug}
+        modalities: dict[str, dict] = {}
+        for m in (
+            db.collection(self._MODALITIES)
+            .where("projectId", "==", project_id).stream()
+        ):
+            md = m.to_dict()
+            modalities[m.id] = {
+                "name": md.get("name", ""),
+                "slug": md.get("slug") or _slug(md.get("name", "")),
+            }
+
+        # class id → {modality_slug, modality_name, class_name}
+        class_info: dict[str, dict] = {}
+        for c in (
+            db.collection(self._CLASSES)
+            .where("projectId", "==", project_id).stream()
+        ):
+            cd = c.to_dict()
+            mod = modalities.get(cd.get("modalityId", ""), {})
+            class_info[c.id] = {
+                "modality_slug": mod.get("slug", ""),
+                "modality_name": mod.get("name", ""),
+                "class_name": cd.get("name", ""),
+            }
+
+        # active memberships → roles per uid
+        roles_by_uid: dict[str, set[str]] = {}
+        for m in (
+            db.collection(self._MEMBERSHIPS)
+            .where("projectId", "==", project_id)
+            .where("status", "==", "active").stream()
+        ):
+            md = m.to_dict()
+            uid = md.get("userId", "")
+            if uid:
+                roles_by_uid.setdefault(uid, set()).update(md.get("roles") or [])
+
+        # user docs for members
+        user_docs: dict[str, dict] = {}
+        if roles_by_uid:
+            refs = [db.collection(self._USERS).document(u) for u in roles_by_uid]
+            for doc in db.get_all(refs):
+                if doc.exists:
+                    user_docs[doc.id] = doc.to_dict()
+
+        # ensure guardians of members are present even if not active members
+        missing_guardians = {
+            ud.get("guardianUid") for ud in user_docs.values()
+            if ud.get("guardianUid") and ud.get("guardianUid") not in user_docs
+        }
+        if missing_guardians:
+            grefs = [
+                db.collection(self._USERS).document(g)
+                for g in missing_guardians if g
+            ]
+            for doc in db.get_all(grefs):
+                if doc.exists:
+                    user_docs[doc.id] = doc.to_dict()
+                    roles_by_uid.setdefault(doc.id, set()).add("guardian")
+
+        people: list[dict] = []
+        for uid, ud in user_docs.items():
+            class_ids = ud.get("classIds", []) or []
+            turmas = [
+                RosterTurma(
+                    modality_name=class_info[cid]["modality_name"],
+                    class_name=class_info[cid]["class_name"],
+                )
+                for cid in class_ids
+                if cid in class_info and class_info[cid]["modality_name"]
+            ]
+            enrolled_slugs = {
+                class_info[cid]["modality_slug"]
+                for cid in class_ids
+                if cid in class_info and class_info[cid]["modality_slug"]
+            }
+            people.append({
+                "uid": uid,
+                "name": ud.get("name", ""),
+                "nickname": ud.get("nickname"),
+                "birthDate": ud.get("birthDate"),
+                "photoUrl": ud.get("photoUrl"),
+                "guardianUid": ud.get("guardianUid"),
+                "roles": roles_by_uid.get(uid, set()),
+                "graduation": ud.get("graduation") or {},
+                "enrolledSlugs": enrolled_slugs,
+                "turmas": turmas,
+            })
+
+        return self.assemble_roster(people, systems)
 
     # ── Dashboard ────────────────────────────────────────────────────────
 

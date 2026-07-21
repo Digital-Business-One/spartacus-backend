@@ -71,6 +71,9 @@ class GraduationStudentCard(BaseModel):
     is_dependent: bool = False
     guardian_uid: Optional[str] = None
     guardian_name: Optional[str] = None
+    # Which modality this card belongs to (roster only; harmless in flat dashboard)
+    modality_slug: str = ""
+    modality_name: str = ""
     # Current graduation in this modality (may be empty = "sem graduação")
     belt: Optional[str] = None
     belt_name: Optional[str] = None
@@ -102,3 +105,43 @@ class GraduationActionRequest(BaseModel):
 
     modality: str                       # slug
     kind: Optional[Literal["degree", "belt"]] = None
+
+
+# ── Roster (grouped by guardian) ──────────────────────────────────────────────
+
+
+class RosterTurma(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    modality_name: str
+    class_name: str
+
+
+class RosterPerson(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    user_id: str
+    display_name: str          # nickname ?? name
+    name: str
+    initials: str
+    photo_url: Optional[str] = None
+    age: Optional[int] = None
+    is_dependent: bool = False
+    guardian_uid: Optional[str] = None
+    turmas: list[RosterTurma] = []
+    graduations: list[GraduationStudentCard] = []
+
+
+class RosterFamily(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    guardian: RosterPerson
+    guardian_is_student: bool = False
+    dependents: list[RosterPerson] = []
+
+
+class RosterOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    families: list[RosterFamily] = []
+    pending_count: int = 0
