@@ -4,6 +4,7 @@ records at creation time (3 write paths: checkin, staff confirm, absence job).
 See: docs/superpowers/specs/2026-07-18-frequencia-analitica-design.md
 """
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -24,6 +25,10 @@ _PROJECT_ID = "spartacus"
 _USER_ID = "user123"
 _VERIFY = "app.security.middleware.verify_id_token"
 _FS_CHECKIN = "app.services.checkin_service.firestore"
+
+# Relógio injetado no job de faltas: 16/07/2026 é quinta, depois da aula das
+# 19h da agenda usada nas fixtures.
+_JOB_NOW = datetime(2026, 7, 16, 23, 59, tzinfo=timezone(timedelta(hours=-4)))
 
 _HEADERS = {
     "Authorization": "Bearer tok",
@@ -336,24 +341,25 @@ class TestConfirmAttendanceWritesSnapshotOnCreate:
 
 class TestAbsenceJobWritesSnapshot:
     def _mock_db(self, graduation=None):
+        """Job dirigido pela agenda: a turma vem da query de `classes` e o
+        `aula` é materializado pelo próprio job (spec 29/07 §5)."""
         mock_db = MagicMock()
 
-        now_iso_start = "2026-07-16T00:00:00+00:00"
-
-        aula_doc = MagicMock()
-        aula_doc.id = "t1_20260716_1900"
-        aula_doc.to_dict.return_value = {
-            "projectId": _PROJECT_ID,
-            "turmaId": "t1",
-            "endTime": now_iso_start,
-        }
-
         aulas_col = MagicMock()
-        aulas_q = aulas_col.where.return_value.where.return_value.where.return_value
-        aulas_q.stream.return_value = [aula_doc]
+        aulas_col.document.return_value.get.return_value.exists = False
 
+        class_doc = _class_doc()
+        class_doc.id = "t1"
+        class_doc.to_dict.return_value = {
+            **class_doc.to_dict.return_value,
+            "projectId": _PROJECT_ID,
+            "schedule": [
+                {"day": "thu", "startTime": "19:00", "endTime": "20:00"},
+            ],
+        }
         classes_col = MagicMock()
-        classes_col.document.return_value.get.return_value = _class_doc()
+        classes_col.where.return_value.stream.return_value = [class_doc]
+        classes_col.document.return_value.get.return_value = class_doc
 
         modalities_col = MagicMock()
         modalities_col.document.return_value.get.return_value = _modality_doc()
@@ -396,7 +402,7 @@ class TestAbsenceJobWritesSnapshot:
             "app.services.absence_job_service.firestore",
         ) as fs:
             fs.client.return_value = mock_db
-            svc.compute(_PROJECT_ID)
+            svc.compute(_PROJECT_ID, now=_JOB_NOW)
 
         assert attendance_col.add.call_count == 1
         (written,), _ = attendance_col.add.call_args
@@ -412,7 +418,7 @@ class TestAbsenceJobWritesSnapshot:
             "app.services.absence_job_service.firestore",
         ) as fs:
             fs.client.return_value = mock_db
-            svc.compute(_PROJECT_ID)
+            svc.compute(_PROJECT_ID, now=_JOB_NOW)
 
         assert attendance_col.add.call_count == 1
         (written,), _ = attendance_col.add.call_args

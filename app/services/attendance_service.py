@@ -192,10 +192,22 @@ class AttendanceService:
         # of this code did) silently drops in-window records belonging to
         # turmas the user has since left, because `classIds` is mutable.
         today = datetime.now(_TZ_OFFSET).date()
-        months_range = self._resolve_months_range(today, year, months)
 
         user_created_dt = self._parse_local_dt(
             user_doc.to_dict().get("createdAt"),
+        )
+
+        # Effective per-turma window (`max(user.createdAt,
+        # attendanceStartDate)`, None = turma excluded). Until now this lived
+        # inside `_compute_analytics`, so the percentage honoured the data-base
+        # but the calendar didn't; computing it here lets both share the cut.
+        windows: dict[str, datetime | None] = {
+            cid: self._turma_window(class_data_by_id.get(cid), user_created_dt)
+            for cid in class_ids
+        }
+
+        months_range = self._resolve_months_range(
+            today, year, months, windows,
         )
 
         # 3. Get all attendance records for the user, windowed at the query
@@ -232,6 +244,26 @@ class AttendanceService:
             attendance_by_date.setdefault(local_date, []).append(data)
             attendance_dates.add(local_date)
 
+        # Records may point at turmas the student has already left, which are
+        # absent from `class_ids` and therefore from `windows`. Resolve those
+        # too, so the orphan branch of `_build_month_records` can apply the
+        # same cut instead of showing pre-data-base history.
+        orphan_ids = {
+            d.get("turmaId")
+            for recs in attendance_by_date.values()
+            for d in recs
+            if d.get("turmaId") and d.get("turmaId") not in windows
+        }
+        if orphan_ids:
+            refs = [
+                db.collection(self._CLASSES).document(tid)
+                for tid in orphan_ids
+            ]
+            for doc in db.get_all(refs):
+                windows[doc.id] = self._turma_window(
+                    doc.to_dict() if doc.exists else None, user_created_dt,
+                )
+
         # 4. Build month summaries with individual records
         # (`today`/`months_range` computed earlier, in step 2b)
         month_summaries: list[MonthSummary] = []
@@ -240,8 +272,14 @@ class AttendanceService:
 
         for y, m in months_range:
             records, attended, expected = self._build_month_records(
-                y, m, schedule_items, attendance_by_date, today,
+                y, m, schedule_items, attendance_by_date, today, windows,
             )
+            # Hard cut: a month left empty by the window carries no history at
+            # all, so it doesn't reach the response (nor the app's period
+            # select). Emptiness caused by the status filter below is a
+            # different thing and keeps the month, as before.
+            if not records:
+                continue
             # Apply status filter if provided
             if statuses:
                 records = [r for r in records if r.status in statuses]
@@ -447,12 +485,29 @@ class AttendanceService:
         schedule_items: list[_ScheduleItem],
         attendance_by_date: dict[date, list[dict]],
         today: date,
+        windows: dict[str, datetime | None] | None = None,
     ) -> tuple[list[AttendanceRecord], int, int]:
         """Build individual attendance records for a month.
 
         Returns (records, attended_count, expected_count).
         Records are sorted newest-first.
+
+        `windows` maps turma id → effective start (None = turma excluded).
+        Anything before its turma's window — synthetic absence or real doc —
+        is dropped, and dropped days don't count towards `expected`, so the
+        monthly summary agrees with the analytical percentage.
         """
+        windows = windows or {}
+
+        def _in_window(class_id: str | None, day: date) -> bool:
+            """Whether a turma counts on `day`. Unknown turma = no cut."""
+            if class_id not in windows:
+                return True
+            window = windows[class_id]
+            if window is None:
+                return False
+            return day >= window.date()
+
         if not schedule_items:
             # No schedule = show only actual attendance docs (orphaned records)
             orphaned: list[AttendanceRecord] = []
@@ -463,6 +518,8 @@ class AttendanceService:
                 if dt.year != year or dt.month != month:
                     continue
                 for r in recs:
+                    if not _in_window(r.get("turmaId"), dt):
+                        continue
                     d = dt.day
                     s_raw = r.get("status", "registered")
                     if s_raw in ("confirmed", "registered"):
@@ -514,9 +571,14 @@ class AttendanceService:
             for si in schedule_items:
                 if si.weekday != weekday:
                     continue
+                if not _in_window(si.class_id, current_date):
+                    continue
 
                 expected += 1
-                day_records = attendance_by_date.get(current_date, [])
+                day_records = [
+                    r for r in attendance_by_date.get(current_date, [])
+                    if _in_window(r.get("turmaId"), current_date)
+                ]
                 date_label = (
                     f"{d:02d} de {_MONTH_NAMES_PT[month]}"
                 )
@@ -622,18 +684,35 @@ class AttendanceService:
         today: date,
         year: int | None,
         months: list[int] | None,
+        windows: dict[str, datetime | None] | None = None,
     ) -> list[tuple[int, int]]:
         """Compute (year, month) tuples to iterate.
 
         - If year+months provided: those exact months
         - If year only: all 12 months of the year
         - Otherwise: last N months ending at today
+
+        In every case the range is cut at the month of the earliest turma
+        window: nothing before the data-base has history to show, and reading
+        those months would only produce synthetic absences to discard.
         """
         if year is not None and months:
-            return sorted(((year, m) for m in months), reverse=True)
-        if year is not None:
-            return [(year, m) for m in range(12, 0, -1)]
-        return AttendanceService._last_n_months(today, _HISTORY_MONTHS)
+            months_range = sorted(((year, m) for m in months), reverse=True)
+        elif year is not None:
+            months_range = [(year, m) for m in range(12, 0, -1)]
+        else:
+            months_range = AttendanceService._last_n_months(
+                today, _HISTORY_MONTHS,
+            )
+
+        starts = [w for w in (windows or {}).values() if w is not None]
+        if not starts:
+            return months_range
+        earliest = min(starts).date()
+        return [
+            (y, m) for (y, m) in months_range
+            if (y, m) >= (earliest.year, earliest.month)
+        ]
 
     @staticmethod
     def _calc_streak(
